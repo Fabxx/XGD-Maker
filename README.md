@@ -9,7 +9,7 @@ XGD Maker turns extracted Xbox 360 game folders back into XGD2/XGD3 disc images 
 | Windows 10 or 11, x64 | yes | running the program |
 | [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) | yes | running the program (not needed for a self-contained build) |
 | Internet connection | for the SS | downloading the SS from the abgx360 database; files already in `%APPDATA%\abgx360\StealthFiles` are used offline |
-| [abgx360 1.0.7](http://abgx360.hadzz.com) | optional | checking each new ISO and running AutoFix |
+| [abgx360 1.0.7](http://abgx360.hadzz.com) | yes | checking each new ISO and running AutoFix |
 | Free disk space | yes | about 7.6 GB per XGD2 ISO and 8.7 GB per XGD3 ISO |
 
 To play the ISOs in Xenon you also need your own console's DVD key in Xenon's `dvdkey.txt` (one line, 32 hex characters, in `%APPDATA%\Xenon\console\` by default).
