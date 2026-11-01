@@ -1,7 +1,5 @@
 # XGD Maker
-<p align="center">
-<img src="https://github.com/Fabxx/XGD-Maker/blob/main/GUI.png?raw=true" alt="XGD Maker GUI" width="800" height="600"/><br>
-</p>
+
 XGD Maker turns extracted Xbox 360 game folders back into XGD2/XGD3 disc images (ISO), and turns ISOs back into folders. It writes the Xbox 360 file system (XDVDFS) itself, so the Xbox 360 XDK is not needed. When the game is in the [abgx360](http://abgx360.hadzz.com) database, the disc's verified security sector (SS) is added, so the image can be used with the [Xenon](https://github.com/xenon-emu/xenon) emulator.
 
 ## Requirements
@@ -9,10 +7,11 @@ XGD Maker turns extracted Xbox 360 game folders back into XGD2/XGD3 disc images 
 | Dependency | Required | Used for |
 |---|---|---|
 | Windows 10 or 11, x64 | yes | running the program |
-| [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) | yes | running the program (not needed for a self-contained build) |
+| [abgx360 1.0.7](http://abgx360.hadzz.com) | yes | checking every new ISO and running AutoFix; no ISO is built without it |
 | Internet connection | for the SS | downloading the SS from the abgx360 database; files already in `%APPDATA%\abgx360\StealthFiles` are used offline |
-| [abgx360 1.0.7](http://abgx360.hadzz.com) | yes | checking each new ISO and running AutoFix |
 | Free disk space | yes | about 7.6 GB per XGD2 ISO and 8.7 GB per XGD3 ISO |
+
+The release `XGD Maker.exe` is a single self-contained file: the .NET runtime is included, so nothing else has to be installed. (Only building from source needs the .NET 8 SDK.)
 
 To play the ISOs in Xenon you also need your own console's DVD key in Xenon's `dvdkey.txt` (one line, 32 hex characters, in `%APPDATA%\Xenon\console\` by default).
 
@@ -20,7 +19,7 @@ To play the ISOs in Xenon you also need your own console's DVD key in Xenon's `d
 
 1. **Games folder:** choose a folder. Every folder inside it (at any depth) that directly contains `default.xex` is listed as a game. A game's own subfolders are not searched further.
 2. **Output folder** (optional): where the ISOs are written. Leave it empty to write each ISO next to its game folder.
-3. **ABGX360:** path to `abgx360.exe`. Common install locations are filled in automatically.
+3. **ABGX360 (required):** path to `abgx360.exe`. Common install locations are filled in automatically. **Build checked** refuses to start without it.
 4. Set the options (below), tick the games you want and click **Build checked**.
 
 Games are built one at a time. **Cancel** stops the current game (its partial ISO is deleted) and skips the rest. A summary is shown at the end, and the full log is in the window and in each game's report file.
@@ -58,10 +57,8 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 
 | Status | Meaning |
 |---|---|
-| PASS – SS v2 embedded, ready for Xenon | the ISO has a verified SS v2 and `.iso.ss` was written |
-| PASS – SS embedded, but v1 (Xenon needs v2) | only an SS v1 exists in the database for this disc |
+| PASS – SS v2 embedded, ready for Xenon / PASS – SS v1 embedded, ready for Xenon | the ISO has a verified SS (version 1 or 2) and `.iso.ss` was written |
 | PASS – no SS (no verified SS for this disc) | the game is not in the database; the ISO has no SS |
-| Built (not verified: ABGX360 not found) | abgx360 is not installed; the ISO was built but not checked |
 | Built, but ABGX360 check FAILED | abgx360 could not read the ISO; see the log |
 | Skipped: ISO already exists | tick **Overwrite existing ISOs** to rebuild it |
 | …, source deleted / source kept | result of the source folder cleanup |
@@ -84,7 +81,7 @@ A game is XGD3 when `default.xex` has a Disc Profile ID (optional header `0x0000
 1. The program computes the CRC-32 of `default.xex` and reads `Xex_<CRC>.ini` from the abgx360 verified database, which lists the verified SS files for that game.
 2. Each listed `SS_<CRC>.bin` is taken from `%APPDATA%\abgx360\StealthFiles`, or downloaded and saved there.
 3. An SS is accepted only if its Media ID matches the Media ID in `default.xex`.
-4. An SS v2 is preferred, because Xenon needs it.
+4. Both SS versions (v1 and v2) are used; when the database lists both for a disc, v2 is chosen.
 5. The DMI and PFI listed for that SS are added as well.
 
 If no SS is found, the ISO is written without one.
@@ -112,7 +109,7 @@ The XDVDFS file system follows the retail layout:
 - **AutoFix:** `abgx360 -pc --af3 --rgn <region> --lang <n> --splitvid --patchitanyway -- "<iso>"`.
   - `--rgn` is the game's region code (`FFFFFFFF` for region-free games).
   - `--lang` is the Windows display language, with English as the fallback.
-  - Afterwards the SS in the ISO is read again, checked for v2 and copied to `<game>.iso.ss`.
+  - Afterwards the SS in the ISO is read again and copied to `<game>.iso.ss`.
 - **Server addresses:** before each run, `%APPDATA%\abgx360\abgx360.ini` is checked. If its server addresses are missing or outdated, it is backed up as `abgx360.ini.bak` and rewritten for `abgx360.hadzz.com`.
 - **Database files:** at startup, `abgx360.dat` and `GameNameLookup.csv` are downloaded if the server has newer copies. A warning is logged if the server does not answer.
 
@@ -135,22 +132,24 @@ The XDVDFS file system follows the retail layout:
 
 | Problem | Solution |
 |---|---|
-| Xenon: "disc unreadable" | check that `<game>.iso.ss` is next to the ISO and that the status shows an SS v2 |
+| Xenon: "disc unreadable" | check that `<game>.iso.ss` is next to the ISO and that the status shows an embedded SS |
+| "You must install .NET" when starting the program | use the single-file release build (see Building from source); a framework-dependent build only runs when its `.runtimeconfig.json` / `.deps.json` files are next to the exe and the **.NET 8 Desktop Runtime x64** (not just the .NET Runtime) is installed |
+| "abgx360 required" | install abgx360 1.0.7 and set the ABGX360 field to `abgx360.exe` |
 | Xenon: "Error opening DVD key file" | create `dvdkey.txt` with your console's DVD key |
 | No SS for a game | the game's `default.xex` is not in the abgx360 database |
 | Database server not answering | check the log at startup and `%APPDATA%\abgx360\abgx360.ini` |
 
 ## Building from source
 
-Visual Studio 2022 17.8 or later, with the **.NET desktop development** workload: open `XGDMaker.sln` and build.
+Requirements: Visual Studio 2022 17.8 or later with the **.NET desktop development** workload, or the .NET 8 SDK.
 
-From the command line (.NET 8 SDK):
+Release build (single self-contained `XGD Maker.exe`, no .NET installation needed on the user's PC):
 
 ```powershell
-dotnet publish XGDMaker -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true
+dotnet publish XGDMaker -p:PublishProfile=SingleFile-win-x64
 ```
 
-Use `--self-contained true` to build an executable that does not need the .NET runtime installed.
+The exe is written to `XGDMaker\bin\publish\`. In Visual Studio: right-click the project → **Publish** → profile **SingleFile-win-x64**. Distribute only that exe, not the contents of `bin\Release`.
 
 ## Code provenance
 

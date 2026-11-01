@@ -10,7 +10,6 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>XGD Maker</AssemblyName>
     <RootNamespace>XGDMaker</RootNamespace>
-    <!-- Lets the project restore/build on machines that are not Windows (CI); harmless on Windows. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
 

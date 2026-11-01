@@ -1,0 +1,12 @@
+bin/
+obj/
+.vs/
+*.user
+
+# never commit game data, security sectors or console keys
+*.iso
+*.ss
+*.bin
+*.dvd
+dvdkey.txt
+*.builder-report.txt

@@ -6,7 +6,7 @@ internal sealed class MainForm : Form
 
     private readonly TextBox _root = new() { Dock = DockStyle.Fill };
     private readonly TextBox _outputFolder = new() { Dock = DockStyle.Fill, PlaceholderText = "Empty = next to each game folder" };
-    private readonly TextBox _abgx = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _abgx = new() { Dock = DockStyle.Fill, PlaceholderText = "Required: path to abgx360.exe" };
     private readonly CheckBox _randomFill = new()
     {
         AutoSize = true,
@@ -319,9 +319,14 @@ internal sealed class MainForm : Form
         }
 
         var abgx = _abgx.Text.Trim();
-        var abgxAvailable = File.Exists(abgx);
+        if (!File.Exists(abgx))
+        {
+            MessageBox.Show(this, "abgx360.exe was not found. XGD Maker needs abgx360 1.0.7 to build ISOs: install it and set its path in the ABGX360 field.",
+                "abgx360 required", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
         var randomFill = _randomFill.Checked;
-        var runPatch = _runPatch.Checked && abgxAvailable;
+        var runPatch = _runPatch.Checked;
         var embedSs = _embedSs.Checked;
         var overwrite = _overwrite.Checked;
         var deleteLoose = _deleteLoose.Checked;
@@ -376,7 +381,7 @@ internal sealed class MainForm : Form
                     var ssEmbedded = result.SsEmbedded;
                     var ssIsV2 = result.SsIsV2;
 
-                    if (abgxAvailable && !result.AbgxRecognizedDefaultXex)
+                    if (!result.AbgxRecognizedDefaultXex)
                     {
                         SetStatus(item, "Built, but ABGX360 check FAILED", Color.Firebrick);
                         failed++;
@@ -401,13 +406,11 @@ internal sealed class MainForm : Form
                     if (deleteSource)
                         sourceNote = await DeleteSourceIfIdenticalAsync(game.Folder, output, token);
 
-                    var prefix = (abgxAvailable ? "PASS" : "Built (not verified: ABGX360 not found)") + sourceNote;
+                    var prefix = "PASS" + sourceNote;
                     if (!ssEmbedded)
                         SetStatus(item, $"{prefix} – no SS (no verified SS for this disc)", Color.DarkOrange);
-                    else if (!ssIsV2)
-                        SetStatus(item, $"{prefix} – SS embedded, but v1 (Xenon needs v2)", Color.DarkOrange);
                     else
-                        SetStatus(item, $"{prefix} – SS v2 embedded, ready for Xenon", Color.ForestGreen);
+                        SetStatus(item, $"{prefix} – SS v{(ssIsV2 ? 2 : 1)} embedded, ready for Xenon", Color.ForestGreen);
                     passed++;
                 }
                 catch (OperationCanceledException)

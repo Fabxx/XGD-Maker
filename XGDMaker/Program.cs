@@ -33,6 +33,8 @@ internal static class IsoBuilder
         var output = Path.GetFullPath(request.OutputIso);
 
         if (!Directory.Exists(source)) throw new InvalidOperationException("The game folder does not exist.");
+        if (string.IsNullOrWhiteSpace(request.Abgx) || !File.Exists(request.Abgx))
+            throw new InvalidOperationException("abgx360.exe was not found. XGD Maker needs abgx360 to build ISOs.");
         if (!output.EndsWith(".iso", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The output filename must end in .iso.");
         if (IsInside(output, source))
@@ -130,7 +132,6 @@ internal static class IsoBuilder
             }
 
             var abgxRecognized = false;
-            if (!string.IsNullOrWhiteSpace(request.Abgx) && File.Exists(request.Abgx))
             {
                 AbgxConfig.EnsureIni(Record);
                 Record("Running ABGX360 in read-only mode...");
@@ -162,10 +163,6 @@ internal static class IsoBuilder
                     Record($"FAIL: ABGX360 found default.xex but reports the ISO is too small for {discType}.");
                 else
                     Record($"FAIL: ABGX360 did not confirm default.xex (exit code {abgxExit}).");
-            }
-            else
-            {
-                Record("ABGX360 was not found. The ISO was built but not checked.");
             }
 
             File.WriteAllText(reportPath, report.ToString(), new UTF8Encoding(false));
@@ -383,7 +380,7 @@ internal static class AbgxPatcher
             }
         }
         var v2 = SsInspector.IsVersion2(embedded);
-        log(v2 ? "Embedded SS: version 2 (usable by Xenon)." : "Embedded SS: version 1 (Xenon needs version 2).");
+        log($"Embedded SS: version {(v2 ? 2 : 1)}.");
         return new PatchOutcome(exitCode, true, ssFile, v2);
     }
 
