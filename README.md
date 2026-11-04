@@ -5,7 +5,7 @@
   </em><br><br>
 </p>
 <p align="center">
-<img src="https://github.com/Fabxx/XGD-Maker/blob/main/GUI.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
+<img src="https://github.com/Fabxx/XGD-Maker/blob/main/XGDM_GUI.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
 </p>
 
 XGD Maker turns extracted Xbox 360 game folders back into XGD2/XGD3 disc images (ISO), and turns ISOs back into folders. It writes the Xbox 360 file system (XDVDFS) itself, so the Xbox 360 XDK is not needed. When the game is in the [abgx360](http://abgx360.hadzz.com) database, the disc's verified security sector (SS) is added, so the image can be used with the [Xenon](https://github.com/xenon-emu/xenon) emulator.
