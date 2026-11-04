@@ -1,3 +1,5 @@
+using System.Windows.Forms.PropertyGridInternal;
+
 namespace XGDMaker;
 
 internal sealed class MainForm : Form
@@ -74,11 +76,12 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "XGD Maker";
+        Text = "XGDM - Xbox Game Disc Maker";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(900, 680);
         Size = new Size(1100, 820);
         Font = new Font("Segoe UI", 9f);
+        Icon = XGDM.Properties.Resources.XGDM;
         _abgx.Text = FindAbgx();
 
         _games.Columns.Add("Game", 260);
