@@ -8,38 +8,29 @@
 <img src="https://github.com/Fabxx/XGD-Maker/blob/main/XGDM_GUI.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
 </p>
 
-XGD Maker turns extracted Xbox 360 game folders back into XGD2/XGD3 disc images (ISO), and turns ISOs back into folders. It writes the Xbox 360 file system (XDVDFS) itself, so the Xbox 360 XDK is not needed. When the game is in the [abgx360](http://abgx360.hadzz.com) database, the disc's verified security sector (SS) is added, so the image can be used with the [Xenon](https://github.com/xenon-emu/xenon) emulator.
+# Feattures
+- Rebuild extracted Xbox 360 game folders into XGD2/XGD3 isos with XDVDFS, no XDK needed.
+
+- Automated use of [abgx360](http://abgx360.hadzz.com) database to get the security sector (SS) to use with [Xenon](https://github.com/xenon-emu/xenon) emulator.
 
 ## Requirements
 
 | Dependency | Required | Used for |
 |---|---|---|
 | Windows 10 or 11, x64 | yes | running the program |
-| [abgx360 1.0.7](http://abgx360.hadzz.com) | yes | checking every new ISO and running AutoFix; no ISO is built without it |
+| [abgx360 1.0.7](http://abgx360.hadzz.com) | yes | checking every new ISO and running AutoFix |
 | Internet connection | for the SS | downloading the SS from the abgx360 database; files already in `%APPDATA%\abgx360\StealthFiles` are used offline |
 | Free disk space | yes | about 7.6 GB per XGD2 ISO and 8.7 GB per XGD3 ISO |
 
-The release `XGD Maker.exe` is a single self-contained file: the .NET runtime is included, so nothing else has to be installed. (Only building from source needs the .NET 8 SDK.)
-
-To play the ISOs in Xenon you also need your own console's DVD key in Xenon's `dvdkey.txt` (one line, 32 hex characters, in `%APPDATA%\Xenon\console\` by default).
-
 ## Building ISOs
 
-1. **Games folder:** choose a folder. Every folder inside it (at any depth) that directly contains `default.xex` is listed as a game. A game's own subfolders are not searched further.
+1. **Games folder**: the path which contains all extracted games in their respective folders, containing `default.xex`.
 2. **Output folder** (optional): where the ISOs are written. Leave it empty to write each ISO next to its game folder.
-3. **ABGX360 (required):** path to `abgx360.exe`. Common install locations are filled in automatically. **Build checked** refuses to start without it.
+3. **ABGX360 (required):** path to `abgx360.exe`. Common install locations are filled in automatically.
 4. Set the options (below), tick the games you want and click **Build checked**.
 
 Games are built one at a time. **Cancel** stops the current game (its partial ISO is deleted) and skips the rest. A summary is shown at the end, and the full log is in the window and in each game's report file.
 
-### List columns
-
-| Column | Content |
-|---|---|
-| Game | ISO name: the folder name without suffixes such as `_extracted`, or `<parent> - <folder>` when two games share a folder name (e.g. `Disc1`) |
-| Type | XGD2 or XGD3, detected from `default.xex`; games that cannot be detected are red and cannot be ticked |
-| Output ISO | full path of the ISO that will be written |
-| Status | progress and result (see below) |
 
 ### Options
 
@@ -65,7 +56,7 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 
 | Status | Meaning |
 |---|---|
-| PASS – SS v2 embedded, ready for Xenon / PASS – SS v1 embedded, ready for Xenon | the ISO has a verified SS (version 1 or 2) and `.iso.ss` was written |
+| PASS – SS v1/v2 embedded, ready for Xenon |
 | PASS – no SS (no verified SS for this disc) | the game is not in the database; the ISO has no SS |
 | Built, but ABGX360 check FAILED | abgx360 could not read the ISO; see the log |
 | Skipped: ISO already exists | tick **Overwrite existing ISOs** to rebuild it |
@@ -78,7 +69,7 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 
 Each ISO is extracted to a folder with the ISO's name, next to the ISO (or in the Output folder). If that folder already exists and is not empty, `<name> (extracted)` is used instead, unless **Overwrite existing ISOs** is ticked. ISOs are opened read-only and never changed, and every file is copied byte for byte. Only the game files are extracted (the SS is not part of the file system), so building the extracted folder again gives the same set of files.
 
-## How it works
+## Documentation
 
 ### Disc type
 
@@ -159,7 +150,16 @@ dotnet publish XGDMaker -p:PublishProfile=SingleFile-win-x64
 
 The exe is written to `XGDMaker\bin\publish\`. In Visual Studio: right-click the project → **Publish** → profile **SingleFile-win-x64**. Distribute only that exe, not the contents of `bin\Release`.
 
-## Code provenance
+
+## Credits
+
+- [ABGX360](https://abgx360.hadzz.com/)
+
+- [XDVDFS](https://github.com/antangelo/xdvdfs)
+
+- [EXTRACT-XISO](https://github.com/xboxdev/extract-xiso)
+
+## Disclaimer
 
 All code is original. The XDVDFS format was implemented from public documentation and checked against the open-source xdvdfs and extract-xiso projects. Disc offsets, sizes and SS field positions are facts of the format, also used by abgx360. XGD Maker contains no Microsoft code, XDK tools, keys or game data. abgx360 is a separate program that XGD Maker runs; it is not included.
 
