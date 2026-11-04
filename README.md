@@ -1,4 +1,9 @@
-# XGD Maker
+<p align="center">
+  <img src="https://github.com/Fabxx/XGD-Maker/blob/main/XGD%20Maker.png?raw=true" alt="XGD Maker" width="200" height="200"/><br>
+  <em>
+   Xbox Game Disc Maker (XGDM) v0.2
+  </em><br><br>
+</p>
 <p align="center">
 <img src="https://github.com/Fabxx/XGD-Maker/blob/main/GUI.png?raw=true" alt="XGD Maker GUI" width="800" height="600"/><br>
 </p>
