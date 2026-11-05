@@ -1,49 +1,43 @@
-using System.Windows.Forms.PropertyGridInternal;
-
 namespace XGDMaker;
 
 internal sealed class MainForm : Form
 {
     private const int ColumnGame = 0, ColumnType = 1, ColumnOutput = 2, ColumnStatus = 3;
 
+    private static readonly Color DarkBg = Color.FromArgb(30, 30, 36);
+    private static readonly Color DarkInput = Color.FromArgb(45, 45, 52);
+    private static readonly Color DarkFg = Color.FromArgb(230, 230, 235);
+    private static readonly Color DarkBorder = Color.FromArgb(70, 70, 80);
+    private static readonly Color DarkLogBg = Color.FromArgb(20, 22, 27);
+
     private readonly TextBox _root = new() { Dock = DockStyle.Fill };
-    private readonly TextBox _outputFolder = new() { Dock = DockStyle.Fill, PlaceholderText = "Empty = next to each game folder" };
-    private readonly TextBox _abgx = new() { Dock = DockStyle.Fill, PlaceholderText = "Required: path to abgx360.exe" };
-    private readonly CheckBox _randomFill = new()
-    {
-        AutoSize = true,
-        Checked = true,
-        Text = "Fill unused sectors with random data, like retail discs (writes the full image; slower)"
-    };
-    private readonly CheckBox _runPatch = new()
-    {
-        AutoSize = true,
-        Checked = true,
-        Text = "After each successful build, run ABGX360 AutoFix (runs in the background, output goes to the log)"
-    };
-    private readonly CheckBox _embedSs = new()
-    {
-        AutoSize = true,
-        Checked = true,
-        Text = "Embed the verified SS in the ISO (full disc layout, needed by Xenon)"
-    };
+    private readonly TextBox _outputFolder = new() { Dock = DockStyle.Fill, PlaceholderText = "Empty = next to each game folder / ISO" };
+    // Padding and SS/DMI/PFI embedding are always on for retail-style discs (hidden from the UI).
+    private readonly CheckBox _randomFill = new() { AutoSize = true, Checked = true, Text = "Padding" };
+    private readonly CheckBox _embedSs = new() { AutoSize = true, Checked = true, Text = "SS" };
     private readonly CheckBox _overwrite = new()
     {
         AutoSize = true,
         Checked = false,
-        Text = "Overwrite existing ISOs (and their .iso.ss / .dvd files)"
+        Text = "Overwrite existing files"
     };
-    private readonly CheckBox _deleteLoose = new()
+    private readonly CheckBox _extractIso = new()
     {
         AutoSize = true,
         Checked = false,
-        Text = "Delete the loose .dvd file (the .iso.ss is always kept: Xenon reads the SS from it)"
+        Text = "Extract ISO (list .iso files to extract instead of extracted games to build)"
+    };
+    private readonly CheckBox _darkTheme = new()
+    {
+        AutoSize = true,
+        Checked = false,
+        Text = "Dark theme"
     };
     private readonly CheckBox _deleteSource = new()
     {
         AutoSize = true,
         Checked = false,
-        Text = "Permanently delete the source game folder once the ISO is verified identical to it"
+        Text = "Delete the extracted game folder once the ISO is verified identical to it"
     };
     private readonly ListView _games = new()
     {
@@ -63,15 +57,22 @@ internal sealed class MainForm : Form
         Font = new Font("Consolas", 9.5f),
         BorderStyle = BorderStyle.FixedSingle
     };
-    private readonly Button _scanButton = new() { Text = "Scan", AutoSize = true };
     private readonly Button _checkAll = new() { Text = "Check all", AutoSize = true };
     private readonly Button _checkNone = new() { Text = "Uncheck all", AutoSize = true };
-    private readonly Button _extractButton = new() { Text = "Extract ISOs…", AutoSize = true };
-    private readonly Button _extractFolderButton = new() { Text = "Extract all ISOs in folder…", AutoSize = true };
+    private readonly Button _extractSsButton = new() { Text = "Extract Disc Sectors (SS, PFI, DMI, .DVD)", AutoSize = true };
+    private readonly Button _refreshButton = new() { Text = "Refresh", AutoSize = true };
     private readonly Button _buildButton = new() { Text = "Build checked", AutoSize = true, Height = 36 };
     private readonly Button _cancelButton = new() { Text = "Cancel", AutoSize = true, Height = 36, Enabled = false };
     private readonly ProgressBar _progress = new() { Dock = DockStyle.Fill, Minimum = 0, Value = 0 };
     private readonly Label _progressText = new() { AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(8, 10, 8, 0) };
+    private readonly Label _headerLabel = new()
+    {
+        AutoSize = true,
+        Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+        Padding = new Padding(0, 0, 0, 8)
+    };
+    private readonly Label _cleanupLabel = new();
+    private List<ScanEntry> _entries = new();
     private CancellationTokenSource? _cancel;
 
     public MainForm()
@@ -82,11 +83,10 @@ internal sealed class MainForm : Form
         Size = new Size(1100, 820);
         Font = new Font("Segoe UI", 9f);
         Icon = XGDM.Properties.Resources.XGDM;
-        _abgx.Text = FindAbgx();
 
         _games.Columns.Add("Game", 260);
-        _games.Columns.Add("Type", 60);
-        _games.Columns.Add("Output ISO", 420);
+        _games.Columns.Add("Type", 110);
+        _games.Columns.Add("Output", 370);
         _games.Columns.Add("Status", 300);
 
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), ColumnCount = 1, RowCount = 5 };
@@ -96,45 +96,49 @@ internal sealed class MainForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        root.Controls.Add(new Label
-        {
-            AutoSize = true,
-            Text = "Find extracted Xbox 360 games and build an ABGX360-ready ISO for each one",
-            Font = new Font(Font, FontStyle.Bold),
-            Padding = new Padding(0, 0, 0, 8)
-        }, 0, 0);
+        _headerLabel.Text = "Find extracted Xbox 360 games and .iso files: build retail-style ISOs or extract them";
+        root.Controls.Add(_headerLabel, 0, 0);
 
-        var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, RowCount = 9, Padding = new Padding(0, 0, 0, 8) };
+        var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, RowCount = 7, Padding = new Padding(0, 0, 0, 8) };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 135));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        AddPathRow(fields, 0, "Games folder", _root, "Browse…", BrowseRoot);
+        AddPathRow(fields, 0, "Games", _root, "Browse…", BrowseRoot);
         AddPathRow(fields, 1, "Output folder", _outputFolder, "Browse…", BrowseOutputFolder);
-        AddPathRow(fields, 2, "ABGX360", _abgx, "Browse…", () => BrowseExecutable(_abgx, "abgx360.exe"));
-        fields.Controls.Add(MakeLabel("Padding"), 0, 3);
-        fields.Controls.Add(_randomFill, 1, 3);
-        fields.SetColumnSpan(_randomFill, 2);
-        fields.Controls.Add(MakeLabel("ABGX patch"), 0, 4);
-        fields.Controls.Add(_runPatch, 1, 4);
-        fields.SetColumnSpan(_runPatch, 2);
-        fields.Controls.Add(MakeLabel("SS"), 0, 5);
-        fields.Controls.Add(_embedSs, 1, 5);
-        fields.SetColumnSpan(_embedSs, 2);
-        fields.Controls.Add(MakeLabel("Existing ISOs"), 0, 6);
-        fields.Controls.Add(_overwrite, 1, 6);
+        fields.Controls.Add(MakeLabel("Mode"), 0, 2);
+        fields.Controls.Add(_extractIso, 1, 2);
+        fields.SetColumnSpan(_extractIso, 2);
+        fields.Controls.Add(MakeLabel("Theme"), 0, 3);
+        fields.Controls.Add(_darkTheme, 1, 3);
+        fields.SetColumnSpan(_darkTheme, 2);
+        fields.Controls.Add(MakeLabel("Overwrite"), 0, 4);
+        fields.Controls.Add(_overwrite, 1, 4);
         fields.SetColumnSpan(_overwrite, 2);
-        fields.Controls.Add(MakeLabel("Cleanup"), 0, 7);
-        fields.Controls.Add(_deleteLoose, 1, 7);
-        fields.SetColumnSpan(_deleteLoose, 2);
-        fields.Controls.Add(_deleteSource, 1, 8);
+        _cleanupLabel.Text = "Cleanup";
+        _cleanupLabel.AutoSize = true;
+        _cleanupLabel.Anchor = AnchorStyles.Left;
+        _cleanupLabel.Margin = new Padding(0, 7, 8, 7);
+        fields.Controls.Add(_cleanupLabel, 0, 5);
+        fields.Controls.Add(_deleteSource, 1, 5);
         fields.SetColumnSpan(_deleteSource, 2);
+        var note = new Label
+        {
+            AutoSize = true,
+            Text = "SS, DMI and PFI are embedded in the ISO; padding is always on. No separate .ss/.dvd files are written.",
+            ForeColor = Color.SteelBlue
+        };
+        fields.Controls.Add(note, 1, 6);
+        fields.SetColumnSpan(note, 2);
         root.Controls.Add(fields, 0, 1);
 
         var listPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
         listPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         listPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         var listButtons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false };
-        listButtons.Controls.AddRange(new Control[] { _scanButton, _checkAll, _checkNone, _extractButton, _extractFolderButton });
+        listButtons.Controls.AddRange(new Control[]
+        {
+            _checkAll, _checkNone, _refreshButton, _extractSsButton
+        });
         listPanel.Controls.Add(listButtons, 0, 0);
         listPanel.Controls.Add(_games, 0, 1);
         root.Controls.Add(listPanel, 0, 2);
@@ -158,39 +162,123 @@ internal sealed class MainForm : Form
 
         Controls.Add(root);
 
-        _scanButton.Click += async (_, _) => await ScanAsync();
+        _root.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter) _ = ScanAsync();
+        };
         _checkAll.Click += (_, _) => SetAllChecked(true);
         _checkNone.Click += (_, _) => SetAllChecked(false);
-        _extractButton.Click += async (_, _) => await PickAndExtractIsosAsync();
-        _extractFolderButton.Click += async (_, _) => await ExtractFolderAsync();
-        _buildButton.Click += async (_, _) => await BuildCheckedAsync();
+        _refreshButton.Click += async (_, _) => await ScanAsync();
+        _extractSsButton.Click += async (_, _) => await ExtractSsFromXisosAsync();
+        _buildButton.Click += async (_, _) => await ProcessCheckedAsync();
         _cancelButton.Click += (_, _) =>
         {
             _cancel?.Cancel();
             _cancelButton.Enabled = false;
             AppendLog("Cancelling: the current operation stops now (an ISO being written is deleted) and nothing else is started.");
         };
+        _extractIso.CheckedChanged += (_, _) =>
+        {
+            RefreshList();
+            _buildButton.Text = _extractIso.Checked ? "Extract checked" : "Build checked";
+            _cleanupLabel.Visible = !_extractIso.Checked;
+            _deleteSource.Visible = !_extractIso.Checked;
+        };
+        _darkTheme.CheckedChanged += (_, _) => ApplyTheme(_darkTheme.Checked);
         _outputFolder.TextChanged += (_, _) => RefreshOutputColumn();
         _games.ItemCheck += (_, e) =>
         {
-            if (e.NewValue == CheckState.Checked && _games.Items[e.Index].Tag is FoundGame { Detection.DiscType: null })
+            if (e.NewValue == CheckState.Checked && _games.Items[e.Index].Tag is ScanEntry { IsIso: false, Type: "?" })
                 e.NewValue = CheckState.Unchecked;
         };
 
-        Shown += async (_, _) =>
-        {
-            try
-            {
-                await AbgxDatabase.CheckForUpdatesAsync(AppendLog, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"Database update check failed: {ex.Message}");
-            }
-        };
+        ApplyTheme(_darkTheme.Checked);
 
-        AppendLog("Choose a folder: every folder below it that directly contains default.xex is listed as a game.");
-        AppendLog("Source folders are never modified. Existing ISOs are skipped unless \"Overwrite existing ISOs\" is ticked.");
+        AppendLog("Choose a folder: extracted games (folders with default.xex) and .iso files below it are listed.");
+        AppendLog("Tick \"Extract ISO\" to extract the listed .iso files; leave it unticked to build the listed games into ISOs.");
+        AppendLog("Source files are never modified. Existing outputs are skipped unless \"Overwrite existing files\" is ticked.");
+        AppendLog("SS, DMI and PFI are generated and embedded automatically (no abgx360 required).");
+    }
+
+    private void ApplyTheme(bool dark)
+    {
+        if (dark) ApplyDarkTheme(this);
+        else ApplyLightTheme(this);
+    }
+
+    private void ApplyDarkTheme(Control control)
+    {
+        switch (control)
+        {
+            case Form or TableLayoutPanel or FlowLayoutPanel or Panel:
+                control.BackColor = DarkBg;
+                control.ForeColor = DarkFg;
+                break;
+            case Label or CheckBox:
+                control.BackColor = DarkBg;
+                control.ForeColor = DarkFg;
+                break;
+            case ListView:
+                control.BackColor = DarkInput;
+                control.ForeColor = DarkFg;
+                break;
+            case TextBox:
+                control.BackColor = DarkInput;
+                control.ForeColor = DarkFg;
+                break;
+            case Button button:
+                button.FlatStyle = FlatStyle.Flat;
+                button.FlatAppearance.BorderColor = DarkBorder;
+                button.BackColor = DarkInput;
+                button.ForeColor = DarkFg;
+                button.UseVisualStyleBackColor = false;
+                break;
+            case RichTextBox rich:
+                rich.BackColor = DarkLogBg;
+                rich.ForeColor = Color.Gainsboro;
+                break;
+            case ProgressBar:
+                control.BackColor = DarkInput;
+                break;
+        }
+        foreach (Control child in control.Controls) ApplyDarkTheme(child);
+    }
+
+    private void ApplyLightTheme(Control control)
+    {
+        switch (control)
+        {
+            case Form or TableLayoutPanel or FlowLayoutPanel or Panel:
+                control.BackColor = SystemColors.Control;
+                control.ForeColor = SystemColors.ControlText;
+                break;
+            case Label or CheckBox:
+                control.BackColor = SystemColors.Control;
+                control.ForeColor = SystemColors.ControlText;
+                break;
+            case ListView:
+                control.BackColor = SystemColors.Window;
+                control.ForeColor = SystemColors.WindowText;
+                break;
+            case TextBox:
+                control.BackColor = SystemColors.Window;
+                control.ForeColor = SystemColors.WindowText;
+                break;
+            case Button button:
+                button.FlatStyle = FlatStyle.Standard;
+                button.BackColor = SystemColors.Control;
+                button.ForeColor = SystemColors.ControlText;
+                button.UseVisualStyleBackColor = true;
+                break;
+            case RichTextBox rich:
+                rich.BackColor = SystemColors.Window;
+                rich.ForeColor = SystemColors.WindowText;
+                break;
+            case ProgressBar:
+                control.BackColor = SystemColors.Control;
+                break;
+        }
+        foreach (Control child in control.Controls) ApplyLightTheme(child);
     }
 
     private static Label MakeLabel(string text) => new()
@@ -214,7 +302,7 @@ internal sealed class MainForm : Form
     {
         using var dialog = new FolderBrowserDialog
         {
-            Description = "Select a game folder, or a folder that contains many extracted games",
+            Description = "Select a folder that contains extracted games and/or .iso files",
             UseDescriptionForTitle = true,
             ShowNewFolderButton = false
         };
@@ -228,25 +316,12 @@ internal sealed class MainForm : Form
     {
         using var dialog = new FolderBrowserDialog
         {
-            Description = "Folder for the ISOs (leave empty to put each ISO next to its game folder)",
+            Description = "Folder for the output (leave empty to put each output next to its source)",
             UseDescriptionForTitle = true,
             ShowNewFolderButton = true
         };
         if (Directory.Exists(_outputFolder.Text)) dialog.InitialDirectory = _outputFolder.Text;
         if (dialog.ShowDialog(this) == DialogResult.OK) _outputFolder.Text = dialog.SelectedPath;
-    }
-
-    private void BrowseExecutable(TextBox target, string expectedName)
-    {
-        using var dialog = new OpenFileDialog
-        {
-            Title = $"Locate {expectedName}",
-            Filter = $"{expectedName}|{expectedName}|Executables (*.exe)|*.exe",
-            CheckFileExists = true,
-            FileName = expectedName
-        };
-        if (File.Exists(target.Text)) dialog.InitialDirectory = Path.GetDirectoryName(target.Text);
-        if (dialog.ShowDialog(this) == DialogResult.OK) target.Text = dialog.FileName;
     }
 
     private async Task ScanAsync()
@@ -265,29 +340,9 @@ internal sealed class MainForm : Form
         {
             AppendLog($"Scanning {rootFolder} ...");
             var token = _cancel.Token;
-            var games = await Task.Run(() => GameScanner.Scan(rootFolder, AppendLog, token), token);
-
-            _games.BeginUpdate();
-            foreach (var game in games)
-            {
-                var item = new ListViewItem(new[]
-                {
-                    game.DisplayName,
-                    game.Detection.DiscType ?? "?",
-                    GameScanner.OutputPathFor(game, _outputFolder.Text),
-                    game.Detection.DiscType is null ? game.Detection.Description : "Ready"
-                })
-                {
-                    Tag = game,
-                    ToolTipText = game.Folder
-                };
-                if (game.Detection.DiscType is null) item.ForeColor = Color.Firebrick;
-                _games.Items.Add(item);
-                item.Checked = game.Detection.DiscType is not null;
-            }
-            _games.EndUpdate();
+            _entries = await Task.Run(() => GameScanner.Scan(rootFolder, AppendLog, token), token);
+            RefreshList();
             _games.ShowItemToolTips = true;
-            if (games.Count == 0) AppendLog("No folder containing default.xex was found.");
         }
         catch (OperationCanceledException)
         {
@@ -299,11 +354,39 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void RefreshList()
+    {
+        var showIsos = _extractIso.Checked;
+        _games.BeginUpdate();
+        _games.Items.Clear();
+        foreach (var entry in _entries)
+        {
+            if (entry.IsIso != showIsos) continue;
+            var item = new ListViewItem(new[]
+            {
+                entry.DisplayName,
+                entry.Type,
+                GameScanner.OutputPathFor(entry, _outputFolder.Text),
+                entry.Status
+            })
+            {
+                Tag = entry,
+                ToolTipText = entry.Path
+            };
+            if (!entry.IsIso && entry.Type == "?") item.ForeColor = Color.Firebrick;
+            _games.Items.Add(item);
+            item.Checked = entry.IsIso || entry.Type != "?";
+        }
+        _games.EndUpdate();
+        if (_games.Items.Count == 0)
+            AppendLog(showIsos ? "No .iso file was found under the selected folder." : "No folder containing default.xex was found.");
+    }
+
     private void RefreshOutputColumn()
     {
         foreach (ListViewItem item in _games.Items)
         {
-            if (item.Tag is FoundGame game) item.SubItems[ColumnOutput].Text = GameScanner.OutputPathFor(game, _outputFolder.Text);
+            if (item.Tag is ScanEntry entry) item.SubItems[ColumnOutput].Text = GameScanner.OutputPathFor(entry, _outputFolder.Text);
         }
     }
 
@@ -312,27 +395,26 @@ internal sealed class MainForm : Form
         foreach (ListViewItem item in _games.Items) item.Checked = value;
     }
 
-    private async Task BuildCheckedAsync()
+    private async Task ProcessCheckedAsync()
     {
         var queue = _games.CheckedItems.Cast<ListViewItem>().ToList();
         if (queue.Count == 0)
         {
-            MessageBox.Show(this, "Check at least one game in the list.", "Build", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "Check at least one item in the list.",
+                _extractIso.Checked ? "Extract" : "Build", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
+        if (_extractIso.Checked)
+            await ExtractCheckedAsync(queue);
+        else
+            await BuildCheckedAsync(queue);
+    }
 
-        var abgx = _abgx.Text.Trim();
-        if (!File.Exists(abgx))
-        {
-            MessageBox.Show(this, "abgx360.exe was not found. XGD Maker needs abgx360 1.0.7 to build ISOs: install it and set its path in the ABGX360 field.",
-                "abgx360 required", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return;
-        }
+    private async Task BuildCheckedAsync(List<ListViewItem> queue)
+    {
         var randomFill = _randomFill.Checked;
-        var runPatch = _runPatch.Checked;
         var embedSs = _embedSs.Checked;
         var overwrite = _overwrite.Checked;
-        var deleteLoose = _deleteLoose.Checked;
         var deleteSource = _deleteSource.Checked;
         if (deleteSource && MessageBox.Show(this,
                 "After each ISO is built, the program will compare it byte for byte with its game folder and, only if they " +
@@ -353,8 +435,8 @@ internal sealed class MainForm : Form
             for (var i = 0; i < queue.Count; i++)
             {
                 var item = queue[i];
-                var game = (FoundGame)item.Tag!;
-                var output = GameScanner.OutputPathFor(game, outputFolder);
+                var entry = (ScanEntry)item.Tag!;
+                var output = GameScanner.OutputPathFor(entry, outputFolder);
                 _progressText.Text = $"{i + 1} / {queue.Count}";
 
                 if (token.IsCancellationRequested)
@@ -365,7 +447,7 @@ internal sealed class MainForm : Form
                 }
 
                 AppendLog("");
-                AppendLog($"===== [{i + 1}/{queue.Count}] {game.DisplayName} =====");
+                AppendLog($"===== [{i + 1}/{queue.Count}] {entry.DisplayName} =====");
                 if (File.Exists(output) && !overwrite)
                 {
                     SetStatus(item, "Skipped: ISO already exists", Color.DimGray);
@@ -380,40 +462,26 @@ internal sealed class MainForm : Form
                 try
                 {
                     var result = await IsoBuilder.BuildAsync(
-                        new BuildRequest(game.Folder, output, abgx, randomFill, embedSs, overwrite), AppendLog, token);
+                        new BuildRequest(entry.Path, output, randomFill, embedSs, overwrite), AppendLog, token);
                     var ssEmbedded = result.SsEmbedded;
                     var ssIsV2 = result.SsIsV2;
 
-                    if (!result.AbgxRecognizedDefaultXex)
+                    if (!result.Verified)
                     {
-                        SetStatus(item, "Built, but ABGX360 check FAILED", Color.Firebrick);
+                        SetStatus(item, "ERROR - verification after rebuild FAILED", Color.Firebrick);
                         failed++;
                         _progress.Value = i + 1;
                         continue;
                     }
-                    if (runPatch)
-                    {
-                        SetStatus(item, "PASS – AutoFix running…", Color.ForestGreen);
-                        var patch = await AbgxPatcher.RunAsync(abgx, result, AppendLog, token);
-                        ssEmbedded = patch.SsEmbedded;
-                        ssIsV2 = patch.SsIsV2;
-                    }
-
-                    if (deleteLoose && File.Exists(IsoBuilder.DvdFileFor(output)))
-                    {
-                        File.Delete(IsoBuilder.DvdFileFor(output));
-                        AppendLog($"Deleted loose file {Path.GetFileName(IsoBuilder.DvdFileFor(output))}.");
-                    }
 
                     var sourceNote = "";
                     if (deleteSource)
-                        sourceNote = await DeleteSourceIfIdenticalAsync(game.Folder, output, token);
+                        sourceNote = await DeleteSourceIfIdenticalAsync(entry.Path, output, token);
 
-                    var prefix = "PASS" + sourceNote;
                     if (!ssEmbedded)
-                        SetStatus(item, $"{prefix} – no SS (no verified SS for this disc)", Color.DarkOrange);
+                        SetStatus(item, $"ERROR – could not read the Media ID{sourceNote}", Color.DarkOrange);
                     else
-                        SetStatus(item, $"{prefix} – SS v{(ssIsV2 ? 2 : 1)} embedded, ready for Xenon", Color.ForestGreen);
+                        SetStatus(item, $"XISO OK – SS v{(ssIsV2 ? 2 : 1)} | DMI | PFI | .DVD restored{sourceNote}", Color.ForestGreen);
                     passed++;
                 }
                 catch (OperationCanceledException)
@@ -443,124 +511,36 @@ internal sealed class MainForm : Form
             failed > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
     }
 
-    private async Task PickAndExtractIsosAsync()
-    {
-        using var dialog = new OpenFileDialog
-        {
-            Title = "Choose the Xbox 360 ISOs to extract",
-            Filter = "Xbox 360 ISO (*.iso)|*.iso|All files (*.*)|*.*",
-            Multiselect = true,
-            CheckFileExists = true
-        };
-        if (dialog.ShowDialog(this) != DialogResult.OK || dialog.FileNames.Length == 0) return;
-        await ExtractIsosAsync(dialog.FileNames);
-    }
-
-    private async Task ExtractFolderAsync()
-    {
-        using var dialog = new FolderBrowserDialog
-        {
-            Description = "Choose a folder: the Xbox 360 ISOs inside it (including subfolders) are listed so you can pick which to extract",
-            UseDescriptionForTitle = true,
-            ShowNewFolderButton = false
-        };
-        if (Directory.Exists(_root.Text)) dialog.InitialDirectory = _root.Text;
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
-
-        var folder = dialog.SelectedPath;
-        AppendLog($"Searching {folder} for Xbox 360 ISOs...");
-        SetBusy(true, scanning: true);
-        _cancel = new CancellationTokenSource();
-        var token = _cancel.Token;
-        List<string> isos;
-        try
-        {
-            isos = await Task.Run(() => FindIsoFiles(folder, token), token);
-        }
-        catch (OperationCanceledException)
-        {
-            AppendLog("Search cancelled.");
-            return;
-        }
-        finally
-        {
-            SetBusy(false, scanning: true);
-        }
-        AppendLog($"Found {isos.Count} ISO file(s); their type is checked in the list.");
-        if (isos.Count == 0)
-        {
-            MessageBox.Show(this, "No ISO file was found in that folder.", "Extract ISOs", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        IReadOnlyList<string> selected;
-        using (var picker = new IsoPickerForm(folder, isos))
-        {
-            if (picker.ShowDialog(this) != DialogResult.OK) return;
-            selected = picker.SelectedIsos;
-        }
-        if (selected.Count == 0) return;
-        AppendLog($"{selected.Count} of {isos.Count} ISO(s) selected for extraction.");
-        await ExtractIsosAsync(selected.ToArray());
-    }
-
-    private List<string> FindIsoFiles(string root, CancellationToken token)
-    {
-        var result = new List<string>();
-        var pending = new Stack<DirectoryInfo>();
-        pending.Push(new DirectoryInfo(root));
-        while (pending.Count > 0)
-        {
-            token.ThrowIfCancellationRequested();
-            var folder = pending.Pop();
-            try
-            {
-                foreach (var entry in folder.EnumerateFileSystemInfos())
-                {
-                    if ((entry.Attributes & FileAttributes.Directory) != 0)
-                    {
-                        if ((entry.Attributes & FileAttributes.ReparsePoint) == 0) pending.Push((DirectoryInfo)entry);
-                    }
-                    else if (entry.Extension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
-                    {
-                        result.Add(entry.FullName);
-                    }
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                AppendLog($"Skipped {folder.FullName}: {ex.Message}");
-            }
-        }
-        result.Sort(StringComparer.OrdinalIgnoreCase);
-        return result;
-    }
-
-    private async Task ExtractIsosAsync(string[] isos)
+    private async Task ExtractCheckedAsync(List<ListViewItem> queue)
     {
         var outputFolder = _outputFolder.Text.Trim();
         var overwrite = _overwrite.Checked;
         SetBusy(true);
         _cancel = new CancellationTokenSource();
         var token = _cancel.Token;
-        _progress.Maximum = isos.Length;
+        _progress.Maximum = queue.Count;
         _progress.Value = 0;
         int done = 0, failed = 0;
         try
         {
-            for (var i = 0; i < isos.Length && !token.IsCancellationRequested; i++)
+            for (var i = 0; i < queue.Count && !token.IsCancellationRequested; i++)
             {
-                var iso = isos[i];
-                _progressText.Text = $"{i + 1} / {isos.Length}";
+                var item = queue[i];
+                var iso = ((ScanEntry)item.Tag!).Path;
+                _progressText.Text = $"{i + 1} / {queue.Count}";
                 AppendLog("");
-                AppendLog($"===== Extract [{i + 1}/{isos.Length}] {Path.GetFileName(iso)} =====");
+                AppendLog($"===== Extract [{i + 1}/{queue.Count}] {Path.GetFileName(iso)} =====");
                 var parent = string.IsNullOrWhiteSpace(outputFolder) ? Path.GetDirectoryName(iso)! : outputFolder;
                 var name = Path.GetFileNameWithoutExtension(iso);
                 var destination = Path.Combine(parent, name);
                 if (!overwrite && Directory.Exists(destination) && Directory.EnumerateFileSystemEntries(destination).Any())
                     destination = Path.Combine(parent, name + " (extracted)");
+                SetStatus(item, "Extracting…", SystemColors.ControlText);
+                _games.EnsureVisible(item.Index);
                 try
                 {
                     await XdvdfsExtractor.ExtractAsync(iso, destination, overwrite, AppendLog, token);
+                    SetStatus(item, "Extracted", Color.ForestGreen);
                     done++;
                 }
                 catch (OperationCanceledException)
@@ -569,6 +549,7 @@ internal sealed class MainForm : Form
                 }
                 catch (Exception ex)
                 {
+                    SetStatus(item, "Error: " + ex.Message, Color.Firebrick);
                     AppendLog($"ERROR: {ex.Message}");
                     failed++;
                 }
@@ -584,6 +565,93 @@ internal sealed class MainForm : Form
         var summary = $"Extraction finished: {done} extracted, {failed} failed.";
         AppendLog(summary);
         MessageBox.Show(this, summary, "Extract ISOs", MessageBoxButtons.OK,
+            failed > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+    }
+
+    private async Task ExtractSsFromXisosAsync()
+    {
+        var root = _root.Text.Trim();
+        if (!Directory.Exists(root))
+        {
+            MessageBox.Show(this, "Choose the Games folder first.", "Extract SS + .DVD", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        AppendLog($"Searching {root} for Xbox 360 ISOs...");
+        List<string> isos = await FindIsoFilesAsync(root);
+        if (isos.Count == 0)
+        {
+            MessageBox.Show(this, "No ISO file was found in that folder.", "Extract SS + .DVD", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        AppendLog(isos.Count == 1
+            ? "Found 1 ISO file; extracting the SS from it..."
+            : $"Found {isos.Count} ISO files; extracting the SS from each...");
+        await ExtractStealthFromIsosAsync(isos.ToArray());
+    }
+
+    private async Task<List<string>> FindIsoFilesAsync(string root)
+    {
+        SetBusy(true, scanning: true);
+        _cancel = new CancellationTokenSource();
+        var token = _cancel.Token;
+        try
+        {
+            return await Task.Run(() => GameScanner.Scan(root, _ => { }, token).Where(e => e.IsIso).Select(e => e.Path).ToList(), token);
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog("Search cancelled.");
+            return new List<string>();
+        }
+        finally
+        {
+            SetBusy(false, scanning: true);
+        }
+    }
+
+    private async Task ExtractStealthFromIsosAsync(string[] isos)
+    {
+        SetBusy(true);
+        _cancel = new CancellationTokenSource();
+        var token = _cancel.Token;
+        _progress.Maximum = isos.Length;
+        _progress.Value = 0;
+        int done = 0, failed = 0;
+        try
+        {
+            for (var i = 0; i < isos.Length && !token.IsCancellationRequested; i++)
+            {
+                var iso = isos[i];
+                _progressText.Text = $"{i + 1} / {isos.Length}";
+                AppendLog("");
+                AppendLog($"===== Extract SS [{i + 1}/{isos.Length}] {Path.GetFileName(iso)} =====");
+                try
+                {
+                    await XdvdfsExtractor.ExtractStealthAsync(iso, AppendLog, token);
+                    done++;
+                }
+                catch (OperationCanceledException)
+                {
+                    AppendLog("Cancelled.");
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"ERROR: {ex.Message}");
+                    failed++;
+                }
+                _progress.Value = i + 1;
+            }
+        }
+        finally
+        {
+            SetBusy(false);
+            _progressText.Text = "";
+        }
+
+        var summary = $"SS extraction finished: {done} extracted, {failed} failed.";
+        AppendLog(summary);
+        MessageBox.Show(this, summary, "Extract SS + .dvd", MessageBoxButtons.OK,
             failed > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
     }
 
@@ -631,18 +699,14 @@ internal sealed class MainForm : Form
 
     private void SetBusy(bool busy, bool scanning = false)
     {
-        _scanButton.Enabled = !busy;
         _buildButton.Enabled = !busy;
         _checkAll.Enabled = !busy;
         _checkNone.Enabled = !busy;
-        _extractButton.Enabled = !busy;
-        _extractFolderButton.Enabled = !busy;
-        _randomFill.Enabled = !busy;
-        _runPatch.Enabled = !busy;
-        _embedSs.Enabled = !busy;
+        _refreshButton.Enabled = !busy;
+        _extractSsButton.Enabled = !busy;
         _overwrite.Enabled = !busy;
-        _deleteLoose.Enabled = !busy;
         _deleteSource.Enabled = !busy;
+        _extractIso.Enabled = !busy;
         _root.ReadOnly = busy;
         _outputFolder.ReadOnly = busy;
         _games.Enabled = !busy || !scanning;
@@ -661,16 +725,5 @@ internal sealed class MainForm : Form
         _log.AppendText(text.Length == 0 ? Environment.NewLine : $"[{DateTime.Now:HH:mm:ss}] {text}{Environment.NewLine}");
         _log.SelectionStart = _log.TextLength;
         _log.ScrollToCaret();
-    }
-
-    private static string FindAbgx()
-    {
-        var candidates = new[]
-        {
-            @"C:\Windows\SysWOW64\abgx360.exe",
-            @"C:\Windows\System32\abgx360.exe",
-            @"C:\Program Files (x86)\abgx360\abgx360.exe"
-        };
-        return candidates.FirstOrDefault(File.Exists) ?? "";
     }
 }

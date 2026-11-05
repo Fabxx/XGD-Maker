@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 
 namespace XGDMaker;
@@ -13,11 +12,10 @@ internal static class Program
     }
 }
 
-internal sealed record BuildRequest(string SourceFolder, string OutputIso, string Abgx, bool RandomFill, bool EmbedSs, bool Overwrite);
+internal sealed record BuildRequest(string SourceFolder, string OutputIso, bool RandomFill, bool EmbedSs, bool Overwrite);
 internal sealed record BuildResult(
-    string OutputIso, bool AbgxRecognizedDefaultXex, uint? RegionCode, string DefaultXex,
-    bool SsEmbedded, bool SsIsV2, string? SsFile, string DvdFile);
-internal sealed record PatchOutcome(int ExitCode, bool SsEmbedded, string? SsFile, bool SsIsV2);
+    string OutputIso, bool Verified, uint? RegionCode, string DefaultXex,
+    bool SsEmbedded, bool SsIsV2);
 
 internal static class IsoBuilder
 {
@@ -33,8 +31,6 @@ internal static class IsoBuilder
         var output = Path.GetFullPath(request.OutputIso);
 
         if (!Directory.Exists(source)) throw new InvalidOperationException("The game folder does not exist.");
-        if (string.IsNullOrWhiteSpace(request.Abgx) || !File.Exists(request.Abgx))
-            throw new InvalidOperationException("abgx360.exe was not found. XGD Maker needs abgx360 to build ISOs.");
         if (!output.EndsWith(".iso", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The output filename must end in .iso.");
         if (IsInside(output, source))
@@ -79,22 +75,30 @@ internal static class IsoBuilder
             Record($"Disc type (auto-detected): {detection.Description}");
             Record($"Output: {output}");
 
-            AbgxStealthFiles.SsChoice? ss = null;
+            StealthData? stealth = null;
             if (request.EmbedSs)
             {
-                ss = await AbgxStealthFiles.FindBestSsAsync(defaultXex, Record, cancellationToken);
-                if (ss is null) Record("No verified SS found: writing a bare game partition without SS.");
+                var mediaId = XexInspector.ReadMediaId(defaultXex);
+                if (mediaId is null)
+                {
+                    Record("Could not read the Media ID from default.xex: writing a bare game partition without SS.");
+                }
+                else
+                {
+                    Record($"Media ID from default.xex: {Convert.ToHexString(mediaId)}");
+                    stealth = StealthResolver.Resolve(discType, mediaId, Record);
+                }
             }
 
-            var partitionOffset = ss is null ? 0L : (xgd3 ? XdvdfsProbe.Xgd3VideoOffset : XdvdfsProbe.Xgd2VideoOffset);
-            var stealth = new List<KeyValuePair<long, byte[]>>();
-            if (ss is not null)
+            var partitionOffset = stealth is null ? 0L : (xgd3 ? XdvdfsProbe.Xgd3VideoOffset : XdvdfsProbe.Xgd2VideoOffset);
+            var sectors = new List<KeyValuePair<long, byte[]>>();
+            if (stealth is not null)
             {
-                stealth.Add(new(partitionOffset - (xgd3 ? 0x8800 : 0x800), ss.Data));
-                if (ss.Dmi is not null) stealth.Add(new(partitionOffset - (xgd3 ? 0x9000 : 0x1000), ss.Dmi));
-                if (ss.Pfi is not null) stealth.Add(new(partitionOffset - (xgd3 ? 0x9800 : 0x1800), ss.Pfi));
-                Record($"Embedding {ss.Name} (SS v{(ss.IsV2 ? 2 : 1)})" +
-                       (ss.Dmi is not null ? " + DMI" : "") + (ss.Pfi is not null ? " + PFI" : "") +
+                sectors.Add(new(partitionOffset - (xgd3 ? 0x8800 : 0x800), stealth.Ss));
+                if (stealth.Dmi is not null) sectors.Add(new(partitionOffset - (xgd3 ? 0x9000 : 0x1000), stealth.Dmi));
+                if (stealth.Pfi is not null) sectors.Add(new(partitionOffset - (xgd3 ? 0x9800 : 0x1800), stealth.Pfi));
+                Record($"Embedding {stealth.Source} (SS v{(stealth.IsV2 ? 2 : 1)})" +
+                       (stealth.Dmi is not null ? " + DMI" : "") + (stealth.Pfi is not null ? " + PFI" : "") +
                        $" in the full {discType} layout (game partition at 0x{partitionOffset:X}; video partition left empty).");
             }
 
@@ -102,7 +106,7 @@ internal static class IsoBuilder
                 ? "Writing the XDVDFS game partition; unused sectors get random data..."
                 : "Writing the XDVDFS game partition; unused sectors stay zero...");
             var size = await XdvdfsImageWriter.WriteAsync(source, output, gamePartitionSize, !xgd3, request.RandomFill,
-                partitionOffset, stealth, Record, cancellationToken);
+                partitionOffset, sectors, Record, cancellationToken);
             outputCreated = true;
             Record($"Image written: {size:N0} bytes.");
 
@@ -118,57 +122,21 @@ internal static class IsoBuilder
                 {
                     iso.SetLength(expectedSize);
                 }
-                Record($"Extended the {discType} image with zero padding to {expectedSize:N0} bytes, the size ABGX360 expects.");
+                Record($"Extended the {discType} image with zero padding to {expectedSize:N0} bytes.");
             }
 
-            WriteDvdDescriptor(output, discType);
-            Record($"Created {Path.GetFileName(DvdFileFor(output))}.");
-            string? ssFile = null;
-            if (ss is not null)
-            {
-                ssFile = SsFileFor(output);
-                await File.WriteAllBytesAsync(ssFile, ss.Data, cancellationToken);
-                Record($"Created {Path.GetFileName(ssFile)} (copy of the embedded SS).");
-            }
-
-            var abgxRecognized = false;
-            {
-                AbgxConfig.EnsureIni(Record);
-                Record("Running ABGX360 in read-only mode...");
-                var abgxOutput = new StringBuilder();
-                var abgxExit = await RunProcessAsync(
-                    request.Abgx,
-                    new[] { "-vws", "--af0", "--noverify", "--noupdate", "--", output },
-                    outputDirectory,
-                    line =>
-                    {
-                        abgxOutput.AppendLine(line);
-                        Record(line);
-                    },
-                    cancellationToken);
-
-                var text = abgxOutput.ToString();
-                var foundXex =
-                    !text.Contains("default.xex was not found", StringComparison.OrdinalIgnoreCase) &&
-                    (text.Contains("default.xex sector:", StringComparison.OrdinalIgnoreCase) ||
-                     text.Contains("Checking default.xex", StringComparison.OrdinalIgnoreCase));
-                var tooShort =
-                    text.Contains("This ISO is short", StringComparison.OrdinalIgnoreCase) ||
-                    text.Contains("ISO size is too small", StringComparison.OrdinalIgnoreCase) ||
-                    text.Contains("filesize too small", StringComparison.OrdinalIgnoreCase);
-                abgxRecognized = foundXex && !tooShort;
-                if (abgxRecognized)
-                    Record("PASS: ABGX360 found default.xex and accepted the image size.");
-                else if (foundXex)
-                    Record($"FAIL: ABGX360 found default.xex but reports the ISO is too small for {discType}.");
-                else
-                    Record($"FAIL: ABGX360 did not confirm default.xex (exit code {abgxExit}).");
-            }
+            // Native verification (replaces the abgx360 read-only check).
+            var verified = XdvdfsProbe.FindGamePartitionOffset(output) == partitionOffset &&
+                           XdvdfsProbe.ContainsRootFile(output, "default.xex");
+            if (verified)
+                Record("PASS: native verification found the XDVDFS header and default.xex in the root directory.");
+            else
+                Record("FAIL: native verification could not confirm the XDVDFS header and default.xex.");
 
             File.WriteAllText(reportPath, report.ToString(), new UTF8Encoding(false));
             completed = true;
-            return new BuildResult(output, abgxRecognized, XexInspector.ReadRegionCode(defaultXex), defaultXex,
-                ss is not null, ss?.IsV2 ?? false, ssFile, DvdFileFor(output));
+            return new BuildResult(output, verified, XexInspector.ReadRegionCode(defaultXex), defaultXex,
+                stealth is not null, stealth?.IsV2 ?? false);
         }
         finally
         {
@@ -197,295 +165,12 @@ internal static class IsoBuilder
         return ss.Any(b => b != 0) ? ss : null;
     }
 
-    private static void WriteDvdDescriptor(string isoPath, string discType)
-    {
-        var layerBreak = discType == "XGD3" ? "2133520" : "1913760";
-        var dvdPath = DvdFileFor(isoPath);
-        File.WriteAllText(dvdPath, $"LayerBreak={layerBreak}{Environment.NewLine}{Path.GetFileName(isoPath)}{Environment.NewLine}", new UTF8Encoding(false));
-    }
-
-    private static async Task<int> RunProcessAsync(
-        string fileName,
-        IReadOnlyList<string> arguments,
-        string workingDirectory,
-        Action<string> output,
-        CancellationToken cancellationToken)
-    {
-        var startInfo = new ProcessStartInfo(fileName)
-        {
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-        foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
-
-        using var process = new Process { StartInfo = startInfo };
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) output(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) output(e.Data); };
-        if (!process.Start()) throw new InvalidOperationException($"Could not start {Path.GetFileName(fileName)}.");
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        await process.WaitForExitAsync(cancellationToken);
-        process.WaitForExit();
-        return process.ExitCode;
-    }
-
     private static bool IsInside(string filePath, string directory)
     {
         var normalizedDirectory = Path.GetFullPath(directory)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var normalizedFile = Path.GetFullPath(filePath);
         return normalizedFile.StartsWith(normalizedDirectory, StringComparison.OrdinalIgnoreCase);
-    }
-}
-
-internal static class AbgxConfig
-{
-    private static readonly (string Key, string Comment, string Value)[] Entries =
-    {
-        ("web_inidir", "http directory that contains verified ini files", "http://abgx360.hadzz.com/verified/"),
-        ("web_unverifiedinidir", "http directory that contains unverified ini files", "http://abgx360.hadzz.com/unverified/"),
-        ("web_csv", "http path to GameNameLookup.csv", "http://abgx360.hadzz.com/GameNameLookup.csv"),
-        ("web_dat", "http path to abgx360.dat", "http://abgx360.hadzz.com/abgx360.dat"),
-        ("web_topology", "http path to topology.php", "http://abgx360.hadzz.com/topology.php"),
-        ("web_stealthdir", "http directory that contains SS/DMI/PFI/Video stealth files", "http://abgx360.hadzz.com/StealthFiles/"),
-        ("web_autoupload", "http form for submitting AutoUploads", "http://abgx360.hadzz.com/Control/AutoUpload.php"),
-    };
-
-    public static string IniPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "abgx360", "abgx360.ini");
-
-    public static void EnsureIni(Action<string> log)
-    {
-        try
-        {
-            var path = IniPath;
-            if (File.Exists(path))
-            {
-                var current = ParseValues(File.ReadAllLines(path));
-                var wrong = Entries
-                    .Where(e => !current.TryGetValue(e.Key, out var value) || !string.Equals(value, e.Value, StringComparison.Ordinal))
-                    .Select(e => e.Key)
-                    .ToList();
-                if (wrong.Count == 0)
-                {
-                    log($"abgx360.ini is up to date ({path}).");
-                    return;
-                }
-                var backup = path + ".bak";
-                for (var i = 2; File.Exists(backup); i++) backup = $"{path}.bak{i}";
-                File.Copy(path, backup);
-                log($"abgx360.ini had outdated or missing server addresses ({string.Join(", ", wrong)}); original saved as {backup}.");
-            }
-            else
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                log($"abgx360.ini not found; creating {path}.");
-            }
-
-            var content = new StringBuilder();
-            foreach (var (key, comment, value) in Entries)
-            {
-                if (content.Length > 0) content.Append("\r\n");
-                content.Append("# ").Append(comment).Append("\r\n");
-                content.Append(key).Append(": ").Append(value).Append("\r\n");
-            }
-            File.WriteAllText(path, content.ToString(), new UTF8Encoding(false));
-            log("abgx360.ini written with the current database server addresses.");
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            log($"Warning: could not update abgx360.ini: {ex.Message}");
-        }
-    }
-
-    public static IReadOnlyDictionary<string, string> CurrentAddresses()
-    {
-        var result = Entries.ToDictionary(e => e.Key, e => e.Value, StringComparer.Ordinal);
-        try
-        {
-            if (File.Exists(IniPath))
-                foreach (var (key, value) in ParseValues(File.ReadAllLines(IniPath)))
-                    if (result.ContainsKey(key) && value.Length > 0) result[key] = value;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-        }
-        return result;
-    }
-
-    private static Dictionary<string, string> ParseValues(IEnumerable<string> lines)
-    {
-        var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var line in lines)
-        {
-            var colon = line.IndexOf(':');
-            if (colon <= 0 || line.StartsWith('#')) continue;
-            var key = line.Substring(0, colon);
-            if (!key.StartsWith("web_", StringComparison.Ordinal)) continue;
-            values[key] = line.Substring(colon + 1).Trim();
-        }
-        return values;
-    }
-}
-
-internal static class AbgxPatcher
-{
-    public static async Task<PatchOutcome> RunAsync(string abgxPath, BuildResult build, Action<string> log, CancellationToken token)
-    {
-        if (string.IsNullOrWhiteSpace(abgxPath) || !File.Exists(abgxPath))
-            throw new InvalidOperationException("ABGX360 was not found, so AutoFix could not be started.");
-        AbgxConfig.EnsureIni(log);
-
-        var regionCode = build.RegionCode is null or 0 ? 0xFFFFFFFFu : build.RegionCode.Value;
-        var region = regionCode.ToString("X8");
-        var languageText = AbgxLanguageNumber().ToString(System.Globalization.CultureInfo.InvariantCulture);
-        log($"Region code: {region}{(region == "FFFFFFFF" ? " (region free)" : "")}; display language: {languageText}");
-
-        var exitCode = await RunHiddenAsync(abgxPath, new[]
-        {
-            "-pc", "--af3",
-            "--rgn", region,
-            "--lang", languageText,
-            "--splitvid", "--patchitanyway",
-            "--", build.OutputIso
-        }, build.OutputIso, log, token);
-        log($"ABGX360 AutoFix exited with code {exitCode}.");
-
-        if (!File.Exists(build.OutputIso))
-        {
-            log($"{build.OutputIso} no longer exists after AutoFix.");
-            return new PatchOutcome(exitCode, false, null, false);
-        }
-
-        var embedded = IsoBuilder.ReadEmbeddedSs(build.OutputIso);
-        if (embedded is null)
-        {
-            log("The ISO has no embedded SS (bare game partition).");
-            return new PatchOutcome(exitCode, false, null, false);
-        }
-        var ssFile = IsoBuilder.SsFileFor(build.OutputIso);
-        if (!File.Exists(ssFile) || !File.ReadAllBytes(ssFile).AsSpan().SequenceEqual(new ReadOnlySpan<byte>(embedded)))
-        {
-            if (File.Exists(ssFile) && build.SsFile is null)
-            {
-                log($"{Path.GetFileName(ssFile)} exists and was not written by this run; it is kept unchanged.");
-            }
-            else
-            {
-                await File.WriteAllBytesAsync(ssFile, embedded, token);
-                log($"Updated {Path.GetFileName(ssFile)} from the SS now embedded in the ISO.");
-            }
-        }
-        var v2 = SsInspector.IsVersion2(embedded);
-        log($"Embedded SS: version {(v2 ? 2 : 1)}.");
-        return new PatchOutcome(exitCode, true, ssFile, v2);
-    }
-
-    private static async Task<int> RunHiddenAsync(string abgxPath, string[] arguments, string iso,
-        Action<string> log, CancellationToken token)
-    {
-        log("Starting ABGX360 AutoFix: abgx360 " + string.Join(" ", arguments.Select(a => a.Contains(' ') ? $"\"{a}\"" : a)));
-        var startInfo = new ProcessStartInfo(abgxPath)
-        {
-            WorkingDirectory = Path.GetDirectoryName(iso) ?? "",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
-
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start ABGX360.");
-        var stdout = PumpAsync(process.StandardOutput, process, log, token);
-        var stderr = PumpAsync(process.StandardError, process, log, token);
-        try
-        {
-            await process.WaitForExitAsync(token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
-            throw;
-        }
-        await Task.WhenAll(stdout, stderr);
-        return process.ExitCode;
-    }
-
-    private static async Task PumpAsync(StreamReader reader, Process process, Action<string> log, CancellationToken token)
-    {
-        var buffer = new char[4096];
-        var line = new StringBuilder();
-        var lastProgress = DateTime.MinValue;
-        int read;
-        while ((read = await reader.ReadAsync(buffer.AsMemory(), token)) > 0)
-        {
-            for (var i = 0; i < read; i++)
-            {
-                var c = buffer[i];
-                if (c == '\n')
-                {
-                    log(line.ToString().TrimEnd('\r'));
-                    line.Clear();
-                }
-                else if (c == '\r' && i + 1 < read && buffer[i + 1] != '\n')
-                {
-                    if (DateTime.UtcNow - lastProgress > TimeSpan.FromSeconds(5) && line.ToString().Trim().Length > 0)
-                    {
-                        log(line.ToString().Trim());
-                        lastProgress = DateTime.UtcNow;
-                    }
-                    line.Clear();
-                }
-                else
-                {
-                    line.Append(c);
-                }
-            }
-
-            var pending = line.ToString();
-            if (pending.Contains("(y/n)", StringComparison.OrdinalIgnoreCase))
-            {
-                log(pending.Trim() + "  -> answered \"n\" automatically");
-                line.Clear();
-                try
-                {
-                    await process.StandardInput.WriteLineAsync("n");
-                    await process.StandardInput.FlushAsync();
-                }
-                catch (IOException)
-                {
-                }
-            }
-        }
-        if (line.Length > 0) log(line.ToString().TrimEnd('\r'));
-    }
-
-    private static int AbgxLanguageNumber()
-    {
-        var culture = System.Globalization.CultureInfo.CurrentUICulture;
-        switch (culture.TwoLetterISOLanguageName)
-        {
-            case "en": return 1;
-            case "ja": return 2;
-            case "de": return 3;
-            case "fr": return 4;
-            case "es": return 5;
-            case "it": return 6;
-            case "ko": return 7;
-            case "pt": return 9;
-            case "pl": return 11;
-            case "ru": return 12;
-            case "zh":
-                var name = culture.Name;
-                return name.Contains("Hant", StringComparison.OrdinalIgnoreCase) || name.EndsWith("TW", StringComparison.OrdinalIgnoreCase) ||
-                       name.EndsWith("HK", StringComparison.OrdinalIgnoreCase) || name.EndsWith("MO", StringComparison.OrdinalIgnoreCase)
-                    ? 8 : 10;
-            default: return 1;
-        }
     }
 }
 
@@ -537,20 +222,31 @@ internal static class XexInspector
         using var stream = new FileStream(xexPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         var header = new byte[0x18];
         if (ReadFully(stream, header) != header.Length) return null;
-        if (header[0] != (byte)'X' || header[1] != (byte)'E' || header[2] != (byte)'X' || header[3] != (byte)'2') return null;
-
-        var codeOffset = ReadUInt32BigEndian(header, 0x08);
+        if (!IsXex2(header)) return null;
         var entryCount = ReadUInt32BigEndian(header, 0x14);
-        if (entryCount > 4096 || 0x18L + entryCount * 8L > codeOffset) return null;
+        if (entryCount > 4096) return null;
+        var data = new byte[0x18 + (int)entryCount * 8];
+        stream.Seek(0, SeekOrigin.Begin);
+        if (ReadFully(stream, data) != data.Length) return null;
+        return HasDiscProfileId(data);
+    }
 
-        var table = new byte[entryCount * 8];
-        if (ReadFully(stream, table) != table.Length) return null;
+    public static bool? HasDiscProfileId(byte[] data)
+    {
+        if (data.Length < 0x18 || !IsXex2(data)) return null;
+        var codeOffset = ReadUInt32BigEndian(data, 0x08);
+        var entryCount = ReadUInt32BigEndian(data, 0x14);
+        if (entryCount > 4096 || 0x18L + entryCount * 8L > codeOffset) return null;
+        if (0x18L + entryCount * 8L > data.Length) return null;
         for (var i = 0; i < entryCount; i++)
         {
-            if (ReadUInt32BigEndian(table, i * 8) == DiscProfileIdKey) return true;
+            if (ReadUInt32BigEndian(data, 0x18 + i * 8) == DiscProfileIdKey) return true;
         }
         return false;
     }
+
+    private static bool IsXex2(byte[] header) =>
+        header.Length >= 4 && header[0] == (byte)'X' && header[1] == (byte)'E' && header[2] == (byte)'X' && header[3] == (byte)'2';
 
     public static uint? ReadRegionCode(string xexPath)
     {
@@ -565,6 +261,22 @@ internal static class XexInspector
         var value = new byte[4];
         if (ReadFully(stream, value) != value.Length) return null;
         return ReadUInt32BigEndian(value, 0);
+    }
+
+    /// <summary>Reads the 16-byte media id from the XEX certificate (certOffset + 0x140).</summary>
+    public static byte[]? ReadMediaId(string xexPath)
+    {
+        using var stream = new FileStream(xexPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var header = new byte[0x18];
+        if (ReadFully(stream, header) != header.Length) return null;
+        if (header[0] != (byte)'X' || header[1] != (byte)'E' || header[2] != (byte)'X' || header[3] != (byte)'2') return null;
+        var certOffset = ReadUInt32BigEndian(header, 0x10);
+        var position = (long)certOffset + 0x140;
+        if (position + 16 > stream.Length) return null;
+        stream.Seek(position, SeekOrigin.Begin);
+        var value = new byte[16];
+        if (ReadFully(stream, value) != value.Length) return null;
+        return value;
     }
 
     private static int ReadFully(Stream stream, byte[] buffer)
@@ -610,6 +322,97 @@ internal static class XdvdfsProbe
         Xgd3VideoOffset => "full XGD3 layout",
         _ => "unknown layout"
     };
+
+    /// <summary>Native check that a file exists in the image's root directory.</summary>
+    public static bool ContainsRootFile(string isoPath, string fileName)
+    {
+        var offset = FindGamePartitionOffset(isoPath);
+        if (offset is null) return false;
+        using var stream = new FileStream(isoPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.RandomAccess);
+        var descriptor = ReadAt(stream, offset.Value + HeaderOffset, 0x800);
+        var rootSector = BitConverter.ToUInt32(descriptor, 0x14);
+        var rootSize = BitConverter.ToUInt32(descriptor, 0x18);
+        if (rootSize == 0 || rootSize > 256 * 1024 * 1024) return false;
+        var table = ReadAt(stream, offset.Value + (long)rootSector * 0x800, (int)rootSize);
+
+        var visited = new HashSet<int>();
+        var pending = new Stack<int>();
+        pending.Push(0);
+        while (pending.Count > 0)
+        {
+            var o = pending.Pop();
+            if (!visited.Add(o) || o + 14 > table.Length) continue;
+            var left = BitConverter.ToUInt16(table, o);
+            var right = BitConverter.ToUInt16(table, o + 2);
+            var nameLength = table[o + 13];
+            if (nameLength > 0 && o + 14 + nameLength <= table.Length)
+            {
+                var name = Encoding.Latin1.GetString(table, o + 14, nameLength);
+                if (string.Equals(name, fileName, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            if (left != 0) pending.Push(left * 4);
+            if (right != 0) pending.Push(right * 4);
+        }
+        return false;
+    }
+
+    /// <summary>Reads up to maxBytes of a file from the image's root directory (null if not found).</summary>
+    public static byte[]? ReadRootFile(string isoPath, string fileName, int maxBytes)
+    {
+        var offset = FindGamePartitionOffset(isoPath);
+        if (offset is null) return null;
+        using var stream = new FileStream(isoPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.RandomAccess);
+        var descriptor = ReadAt(stream, offset.Value + HeaderOffset, 0x800);
+        if (descriptor.Length < 0x20) return null;
+        var rootSector = BitConverter.ToUInt32(descriptor, 0x14);
+        var rootSize = BitConverter.ToUInt32(descriptor, 0x18);
+        if (rootSize == 0 || rootSize > 256 * 1024 * 1024) return null;
+        var table = ReadAt(stream, offset.Value + (long)rootSector * 0x800, (int)rootSize);
+        if (table.Length == 0) return null;
+
+        var visited = new HashSet<int>();
+        var pending = new Stack<int>();
+        pending.Push(0);
+        while (pending.Count > 0)
+        {
+            var o = pending.Pop();
+            if (!visited.Add(o) || o + 14 > table.Length) continue;
+            var left = BitConverter.ToUInt16(table, o);
+            var right = BitConverter.ToUInt16(table, o + 2);
+            var sector = BitConverter.ToUInt32(table, o + 4);
+            var size = BitConverter.ToUInt32(table, o + 8);
+            var attributes = table[o + 12];
+            var nameLength = table[o + 13];
+            if (nameLength > 0 && o + 14 + nameLength <= table.Length)
+            {
+                var name = Encoding.Latin1.GetString(table, o + 14, nameLength);
+                if (string.Equals(name, fileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    if ((attributes & 0x10) != 0) return null; // it is a directory, not a file
+                    if (size == 0) return Array.Empty<byte>();
+                    var count = (int)Math.Min((long)size, maxBytes);
+                    return ReadAt(stream, offset.Value + (long)sector * 0x800, count);
+                }
+            }
+            if (left != 0) pending.Push(left * 4);
+            if (right != 0) pending.Push(right * 4);
+        }
+        return null;
+    }
+
+    private static byte[] ReadAt(FileStream stream, long position, int count)
+    {
+        var data = new byte[count];
+        stream.Seek(position, SeekOrigin.Begin);
+        var total = 0;
+        while (total < count)
+        {
+            var read = stream.Read(data, total, count - total);
+            if (read == 0) break;
+            total += read;
+        }
+        return total == count ? data : Array.Empty<byte>();
+    }
 
     private static bool HasMagic(FileStream stream, long position)
     {

@@ -145,6 +145,63 @@ internal static class XdvdfsExtractor
         return null;
     }
 
+    public sealed record StealthExtractResult(string SsPath, string? DmiPath, string? PfiPath, string DvdPath, bool IsV2);
+
+    /// <summary>
+    /// Extracts the SS (and, when present, the DMI and PFI) embedded in a redump/retail
+    /// ISO plus a .dvd layer-break descriptor. The SS is also stored under StealthFiles
+    /// so later builds can reuse it automatically.
+    /// </summary>
+    public static async Task<StealthExtractResult> ExtractStealthAsync(string iso, Action<string> log, CancellationToken token)
+    {
+        var partition = XdvdfsProbe.FindGamePartitionOffset(iso);
+        if (partition is null or 0)
+            throw new InvalidOperationException("Not an Xbox 360 XGD image, or it has no video/stealth area (no SS to extract).");
+        var xgd3 = partition.Value == XdvdfsProbe.Xgd3VideoOffset;
+        var ssOffset = partition.Value - (xgd3 ? 0x8800 : 0x800);
+        var dmiOffset = partition.Value - (xgd3 ? 0x9000 : 0x1000);
+        var pfiOffset = partition.Value - (xgd3 ? 0x9800 : 0x1800);
+
+        await using var stream = new FileStream(iso, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.Asynchronous);
+        var ss = await ReadAtAsync(stream, ssOffset, 2048, token);
+        if (!SecuritySector.IsValid(ss))
+            throw new InvalidOperationException("No valid security sector found in front of the game partition.");
+
+        var dmi = await ReadAtAsync(stream, dmiOffset, 2048, token);
+        var pfi = await ReadAtAsync(stream, pfiOffset, 2048, token);
+        if (!DmiSector.LooksValid(dmi)) dmi = null;
+        if (!PfiSector.LooksValid(pfi)) pfi = null;
+
+        var ssPath = IsoBuilder.SsFileFor(iso);
+        var dmiPath = Path.ChangeExtension(iso, ".dmi");
+        var pfiPath = Path.ChangeExtension(iso, ".pfi");
+        var dvdPath = IsoBuilder.DvdFileFor(iso);
+
+        await File.WriteAllBytesAsync(ssPath, ss, token);
+        if (dmi is not null) await File.WriteAllBytesAsync(dmiPath, dmi, token);
+        if (pfi is not null) await File.WriteAllBytesAsync(pfiPath, pfi, token);
+        var layerBreak = xgd3 ? "2133520" : "1913760";
+        await File.WriteAllTextAsync(dvdPath,
+            $"LayerBreak={layerBreak}{Environment.NewLine}{Path.GetFileName(iso)}{Environment.NewLine}", new UTF8Encoding(false), token);
+
+        var mediaId = SecuritySector.ReadMediaId(ss);
+        if (mediaId.Length == SecuritySector.MediaIdLength)
+        {
+            var dir = StealthResolver.StealthFilesDir;
+            Directory.CreateDirectory(dir);
+            var key = Convert.ToHexString(mediaId);
+            await File.WriteAllBytesAsync(Path.Combine(dir, $"SS_{key}.bin"), ss, token);
+            if (dmi is not null) await File.WriteAllBytesAsync(Path.Combine(dir, $"DMI_{key}.bin"), dmi, token);
+            if (pfi is not null) await File.WriteAllBytesAsync(Path.Combine(dir, $"PFI_{key}.bin"), pfi, token);
+            log($"Stored the SS in {dir} (keyed by media id {key}) so future builds reuse it.");
+        }
+
+        var v2 = SecuritySector.IsVersion2(ss);
+        log($"Extracted SS v{(v2 ? 2 : 1)} from {Path.GetFileName(iso)}" +
+            (dmi is not null ? " + DMI" : "") + (pfi is not null ? " + PFI" : "") + $" to {ssPath} and {dvdPath}.");
+        return new StealthExtractResult(ssPath, dmi is not null ? dmiPath : null, pfi is not null ? pfiPath : null, dvdPath, v2);
+    }
+
     private static async Task ReadExactlyAsync(Stream stream, byte[] buffer, int count, CancellationToken token)
     {
         var total = 0;
