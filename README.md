@@ -50,7 +50,7 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 
 | Status | Meaning |
 |---|---|
-| XISO OK – SS | DMI | PFI | .DVD restored | All checks OK |
+| XISO OK | SS - DMI - PFI - .DVD restored | All checks OK |
 | ERROR – could not read the Media ID | the `default.xex` has no readable media id |
 | ERROR - verification after rebuild FAILED | the image header or `default.xex` could not be confirmed; see the log |
 | Skipped: ISO already exists | tick **Overwrite existing ISOs** to rebuild it |
@@ -107,7 +107,6 @@ The XDVDFS file system follows the retail layout:
 | Problem | Solution |
 |---|---|
 | Xenon: "disc unreadable" | check that `<game>.iso.ss` is next to the ISO and that the status shows an embedded SS |
-| "You must install .NET" when starting the program | use the single-file release build (see Building from source); a framework-dependent build only runs when its `.runtimeconfig.json` / `.deps.json` files are next to the exe and the **.NET 8 Desktop Runtime x64** (not just the .NET Runtime) is installed |
 | Xenon: "Error opening DVD key file" | create `dvdkey.txt` with your console's DVD key |
 
 ## Building from source
