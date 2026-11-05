@@ -127,7 +127,7 @@ The exe is written to `XGDMaker\bin\publish\`. In Visual Studio: right-click the
 
 - [EXTRACT-XISO](https://github.com/xboxdev/extract-xiso)
 
-- [ABGX360](https://abgx360.hadzz.com/) (open source reference for the SS/DMI/PFI format; no longer a runtime dependency)
+- [ABGX360](https://abgx360.hadzz.com/) (reference for the SS/DMI/PFI format)
 
 ## Disclaimer
 
