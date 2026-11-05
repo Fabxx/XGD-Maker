@@ -56,7 +56,7 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 
 | Status | Meaning |
 |---|---|
-| PASS – SS v1/v2 embedded, ready for Xenon |
+| PASS – SS v1/v2 embedded, ready for Xenon | All checks OK, security sector was restored |
 | PASS – no SS (no verified SS for this disc) | the game is not in the database; the ISO has no SS |
 | Built, but ABGX360 check FAILED | abgx360 could not read the ISO; see the log |
 | Skipped: ISO already exists | tick **Overwrite existing ISOs** to rebuild it |
