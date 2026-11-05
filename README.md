@@ -8,6 +8,10 @@
 <img src="https://github.com/Fabxx/XGD-Maker/blob/main/GUI.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
 </p>
 
+# Usage Notes
+
+This tool is meant to be used if you have extracted a xbox 360 iso in the past, without preserving the redump sectors and alter the XGD structure. It will NOT restore deleted game files.
+
 # Features
 - Rebuild/Extract Xbox 360 games following XGD format (no XDK needed).
   - Can also extract redump sectors from the iso
