@@ -10,6 +10,7 @@
 
 # Features
 - Rebuild/Extract Xbox 360 games following XGD format (no XDK needed).
+  - Can also extract redump sectors from the iso
 - On rebuilding, generates the SS, DMI, PFI and .DVD natively and embeds them into the ISO
 - Reuses a locally stored SS when one is available (e.g. extracted from a redump disc) instead of the built-in template.
 
