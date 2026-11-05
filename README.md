@@ -8,7 +8,7 @@
 <img src="https://github.com/Fabxx/XGD-Maker/blob/main/XGDM_GUI.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
 </p>
 
-# Feattures
+# Features
 - Rebuild extracted Xbox 360 game folders into XGD2/XGD3 isos with XDVDFS, no XDK needed.
 
 - Automated use of [abgx360](http://abgx360.hadzz.com) database to get the security sector (SS) to use with [Xenon](https://github.com/xenon-emu/xenon) emulator.
