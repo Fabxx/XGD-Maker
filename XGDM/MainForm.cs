@@ -194,7 +194,7 @@ internal sealed class MainForm : Form
 
         ApplyTheme(_darkTheme.Checked);
 
-        AppendLog("Choose a folder: extracted games (folders with default.xex) and .iso files below it are listed.");
+        AppendLog("Choose a folder: extracted games (folders with default.xex/default.xbe) and .iso files below it are listed.");
         AppendLog("Tick \"Extract ISO\" to extract the listed .iso files; leave it unticked to build the listed games into ISOs.");
         AppendLog("Source files are never modified. Existing outputs are skipped unless \"Overwrite existing files\" is ticked.");
         AppendLog("SS, DMI and PFI are generated and embedded automatically (no abgx360 required).");
@@ -488,7 +488,9 @@ internal sealed class MainForm : Form
                     if (deleteSource && entry.GodXblaKind is null)
                         sourceNote = await DeleteSourceIfIdenticalAsync(entry.Path, output, token);
 
-                    if (!ssEmbedded)
+                    if (result.IsXbox1)
+                        SetStatus(item, $"OG XBOX OK – .iso rebuilt{sourceNote}", Color.ForestGreen);
+                    else if (!ssEmbedded)
                         SetStatus(item, $"ERROR – could not read the Media ID{sourceNote}", Color.DarkOrange);
                     else
                         SetStatus(item, $"XISO OK – SS v{(ssIsV2 ? 2 : 1)} | DMI | PFI | .DVD restored{sourceNote}", Color.ForestGreen);
@@ -680,7 +682,8 @@ internal sealed class MainForm : Form
             AppendLog("Source folder kept: it is a drive root.");
             return ", source kept";
         }
-        if (!File.Exists(Path.Combine(fullFolder, "default.xex")))
+        if (!File.Exists(Path.Combine(fullFolder, "default.xex")) &&
+            !File.Exists(Path.Combine(fullFolder, "default.xbe")))
         {
             AppendLog("Source folder kept: it no longer looks like a game folder.");
             return ", source kept";

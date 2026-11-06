@@ -6,12 +6,7 @@
 </p>
 <p align="center">
 <img src="https://github.com/Fabxx/XGD-Maker/blob/main/GUI.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
-<img src="https://github.com/Fabxx/XGD-Maker/blob/main/GUI.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
 </p>
-
-# Usage Notes
-
-This tool is meant to be used if you have extracted a xbox 360 iso in the past, without preserving the redump sectors and alter the XGD structure. It will NOT restore deleted game files.
 
 # Usage Notes
 
@@ -23,6 +18,7 @@ This tool is meant to be used if you have extracted a xbox 360 iso in the past, 
   - Note that if you dumped the game disc you can already extract the files, without the rebuilding process.
 - Reuses a locally stored SS when one is available (e.g. extracted from a redump disc) instead of the built-in template.
 - Detects and extracts Games on Demand (GOD) and XBLA (arcade) packages and rebuilds them as ISOs
+- Detects and rebuilds original Xbox (XGD1) games (`default.xbe`) into the XGD1 full-disc layout for the Xbox 360 backwards compatibility (XeFu)
 
 ## Requirements
 
@@ -49,7 +45,8 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 ### Supported formats
 | Format | Description |
 |---|---|
-| `.xex` | Extracted game files to be rebuilt |
+| `.xex` | Xbox 360 executable; rebuilt ad XGD2/XGD3 full-disc image |
+| `.xbe` | Original Xbox executable; rebuilt as an XGD1 full-disc image for XeFu |
 | `.iso` | Can be extracted to obtain game files and rebuild the XGD structure |
 | `XBLA` | Xbox Live Arcade game folders, which can be extracted and rebuilt as XGD iso |
 | `GOD` | Game On Demand format, same as XBLA behavior |
@@ -69,7 +66,6 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 
 | Status | Meaning |
 |---|---|
-| XISO OK | SS - DMI - PFI - .DVD restored | All checks OK |
 | XISO OK | SS - DMI - PFI - .DVD restored | All checks OK |
 | ERROR – could not read the Media ID | the `default.xex` has no readable media id |
 | ERROR - verification after rebuild FAILED | the image header or `default.xex` could not be confirmed; see the log |
@@ -92,6 +88,8 @@ When a game is built, XGDM reads the media id from `default.xex` (certificate of
 2. **Built-in template** — an XGD2/XGD3 template is cloned and its media id (SS `0x460`, DMI `0x20`) is patched to the game's media id.
 
 The challenge/response data is independent of the media id, so a template SS still authenticates on RGH/JTAG consoles and in the Xenon emulator; the SS/DMI signatures are not checked there. The image is a full retail layout (SS/DMI/PFI in front of the game partition, video partition left empty).
+
+The isos have not been tested on a stock system or a modded DVD firmware without mentioned modifications.
 
 ### Image layout
 
@@ -116,6 +114,18 @@ Games on Demand (GOD) and Xbox Live Arcade (XBLA) packages are not raw XDVDFS di
 - **XBLA** (STFS layout): a single `LIVE` container with a directory block tree and hash chaining; XGDM walks the directory tree and follows each file's block hash chain to reconstruct its content.
 
 The extracted files are then treated like any extracted game folder and rebuilt into a full retail-layout ISO.
+
+### Original Xbox (XGD1)
+
+Original Xbox games use the same XDVDFS filesystem but a `default.xbe` executable instead of `default.xex`. In the scan, a folder containing `default.xbe` is shown as **Xbox Executable (XBE)**; an ISO rebuilt for XeFu is shown as **XGD1**.
+
+When built, XGDM produces the XGD1 full-disc layout:
+- game partition at `0x18300000` (after a ~387 MB video partition, left empty);
+- generated SS (security sector) at `0x182FF800`.
+
+The SS is built in the OG Xbox "complete format" (2048 bytes): PFI, 23 RC4-encrypted challenge entries, SHA-1 hashes and the security sector ranges. The challenge/response values and RSA signatures are not checked on RGH/JTAG consoles, so they are left with template/zero values. XGD1 ISOs produced by `extract-xiso` are also recognised (`default.xbe` in the root directory) and can be extracted normally.
+
+- Note that for better compatibility you'll need the [Hacked XeFu Pack](https://consolemods.org/wiki/File:Hacked_Xefu_Pack.7z) with [XeFu Spoofer](https://consolemods.org/wiki/Xbox_360:Original_Xbox_Games_Compatibility_List)
 
 ## Safety
 
@@ -160,11 +170,13 @@ The exe is written to `XGDMaker\bin\publish\`. In Visual Studio: right-click the
 
 - [Xenia](https://github.com/xenia-project/xenia) (reference for the STFS/SVOD GOD and XBLA container format)
 
+- [xboxdevwiki](https://xboxdevwiki.net/) (reference for the OG Xbox SS/DMI/PFI format)
+
+- [XISOSharp](https://github.com/purelogiccode/XISOSharp) (reference for the OG Xbox disc offsets)
+
 ## Disclaimer
 
-All code is original. The XDVDFS format was implemented from public documentation and checked against the open-source xdvdfs and extract-xiso projects. Disc offsets, sizes and SS/DMI/PFI field positions are facts of the format, also documented by abgx360 and xboxdevwiki. XGD Maker contains no Microsoft code, XDK tools, keys or game data.
-
-Intended for backups of games you own.
+No copyrighted material is involved in the source code, Microsoft and its Xbox trademarks are not affiliated with the project. XGDM does not contain Microsoft code, XDK tools, keys or game data. This software is intended to be used for backups of games you own.
 
 ## License
 

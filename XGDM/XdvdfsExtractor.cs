@@ -13,7 +13,7 @@ internal static class XdvdfsExtractor
         Action<string> log, CancellationToken token)
     {
         var partition = XdvdfsProbe.FindGamePartitionOffset(iso)
-            ?? throw new InvalidOperationException("Not an Xbox 360 XDVDFS image (no MICROSOFT*XBOX*MEDIA header found).");
+            ?? throw new InvalidOperationException("Not an Xbox XDVDFS image (no MICROSOFT*XBOX*MEDIA header found).");
         log($"Game partition at 0x{partition:X} ({XdvdfsProbe.Describe(partition)}).");
 
         if (Directory.Exists(destination) && Directory.EnumerateFileSystemEntries(destination).Any() && !overwrite)

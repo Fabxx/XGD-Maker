@@ -15,10 +15,14 @@ internal static class Program
 internal sealed record BuildRequest(string SourceFolder, string OutputIso, bool RandomFill, bool EmbedSs, bool Overwrite);
 internal sealed record BuildResult(
     string OutputIso, bool Verified, uint? RegionCode, string DefaultXex,
-    bool SsEmbedded, bool SsIsV2);
+    bool SsEmbedded, bool SsIsV2, bool IsXbox1);
 
 internal static class IsoBuilder
 {
+    // Original Xbox (XBOX1) discs are standard DVDs without a fixed partition size;
+    // this is just an upper bound (a bit over a dual-layer 8.5 GB disc).
+    private const long OgXboxMaxGamePartitionSize = 9L * 1024 * 1024 * 1024;
+
     public static string SsFileFor(string iso) => iso + ".ss";
     public static string DvdFileFor(string iso) => Path.ChangeExtension(iso, ".dvd");
 
@@ -44,14 +48,17 @@ internal static class IsoBuilder
             log($"Overwriting the existing {Path.GetFileName(output)}.");
         }
 
-        var defaultXex = Directory.EnumerateFiles(source, "*", SearchOption.TopDirectoryOnly)
-            .FirstOrDefault(path => string.Equals(Path.GetFileName(path), "default.xex", StringComparison.OrdinalIgnoreCase));
-        if (defaultXex is null)
-            throw new InvalidOperationException("default.xex is not directly inside the selected folder.");
+        var files = Directory.EnumerateFiles(source, "*", SearchOption.TopDirectoryOnly).ToList();
+        var defaultXex = files.FirstOrDefault(path => string.Equals(Path.GetFileName(path), "default.xex", StringComparison.OrdinalIgnoreCase));
+        var defaultXbe = files.FirstOrDefault(path => string.Equals(Path.GetFileName(path), "default.xbe", StringComparison.OrdinalIgnoreCase));
+        if (defaultXex is null && defaultXbe is null)
+            throw new InvalidOperationException("default.xex or default.xbe is not directly inside the selected folder.");
 
         var detection = DiscTypeDetector.Detect(source);
         var discType = detection.DiscType ?? throw new InvalidOperationException(detection.Description);
         var xgd3 = discType == "XGD3";
+        var isXbox1 = discType == "Xbox Executable (XBE)";
+        var executable = isXbox1 ? defaultXbe! : defaultXex!;
 
         var outputDirectory = Path.GetDirectoryName(output) ?? throw new InvalidOperationException("Invalid output path.");
         Directory.CreateDirectory(outputDirectory);
@@ -65,20 +72,21 @@ internal static class IsoBuilder
             log(line);
         }
 
-        var gamePartitionSize = xgd3 ? XdvdfsProbe.Xgd3GamePartitionSize : XdvdfsProbe.Xgd2GamePartitionSize;
+        var gamePartitionSize = isXbox1 ? OgXboxMaxGamePartitionSize
+            : xgd3 ? XdvdfsProbe.Xgd3GamePartitionSize : XdvdfsProbe.Xgd2GamePartitionSize;
         var outputCreated = false;
         var completed = false;
         try
         {
             Record($"Source: {source}");
-            Record($"Found: {defaultXex}");
+            Record($"Found: {executable}");
             Record($"Disc type (auto-detected): {detection.Description}");
             Record($"Output: {output}");
 
             StealthData? stealth = null;
-            if (request.EmbedSs)
+            if (request.EmbedSs && !isXbox1)
             {
-                var mediaId = XexInspector.ReadMediaId(defaultXex);
+                var mediaId = XexInspector.ReadMediaId(defaultXex!);
                 if (mediaId is null)
                 {
                     Record("Could not read the Media ID from default.xex: writing a bare game partition without SS.");
@@ -89,10 +97,22 @@ internal static class IsoBuilder
                     stealth = StealthResolver.Resolve(discType, mediaId, Record);
                 }
             }
+            else if (isXbox1)
+            {
+                Record("Original Xbox disc: rebuilding the full layout (game partition + video partition).");
+            }
 
-            var partitionOffset = stealth is null ? 0L : (xgd3 ? XdvdfsProbe.Xgd3VideoOffset : XdvdfsProbe.Xgd2VideoOffset);
+            var partitionOffset = isXbox1 ? XdvdfsProbe.OgxRedumpOffset
+                : stealth is null ? 0L : (xgd3 ? XdvdfsProbe.Xgd3VideoOffset : XdvdfsProbe.Xgd2VideoOffset);
             var sectors = new List<KeyValuePair<long, byte[]>>();
-            if (stealth is not null)
+            if (isXbox1)
+            {
+                // XGD1 (original Xbox) full-disc layout: game partition at 0x18300000,
+                // ~387 MB video partition in front (empty here), generated SS before it.
+                sectors.Add(new(partitionOffset - 0x800, OgXboxSecurity.Generate()));
+                Record($"Original Xbox disc: XGD1 full layout (game partition at 0x{partitionOffset:X}; video partition empty, generated SS at 0x{partitionOffset - 0x800:X}).");
+            }
+            else if (stealth is not null)
             {
                 sectors.Add(new(partitionOffset - (xgd3 ? 0x8800 : 0x800), stealth.Ss));
                 if (stealth.Dmi is not null) sectors.Add(new(partitionOffset - (xgd3 ? 0x9000 : 0x1000), stealth.Dmi));
@@ -105,8 +125,8 @@ internal static class IsoBuilder
             Record(request.RandomFill
                 ? "Writing the XDVDFS game partition; unused sectors get random data..."
                 : "Writing the XDVDFS game partition; unused sectors stay zero...");
-            var size = await XdvdfsImageWriter.WriteAsync(source, output, gamePartitionSize, !xgd3, request.RandomFill,
-                partitionOffset, sectors, Record, cancellationToken);
+            var size = await XdvdfsImageWriter.WriteAsync(source, output, gamePartitionSize, !xgd3 && !isXbox1, request.RandomFill,
+                !isXbox1, partitionOffset, sectors, Record, cancellationToken);
             outputCreated = true;
             Record($"Image written: {size:N0} bytes.");
 
@@ -115,28 +135,32 @@ internal static class IsoBuilder
                 throw new InvalidOperationException("Internal error: the written image does not have the expected layout.");
             Record($"XDVDFS header found; game partition starts at 0x{gameOffset.Value:X} ({XdvdfsProbe.Describe(gameOffset.Value)}).");
 
-            var expectedSize = partitionOffset + gamePartitionSize;
-            if (size < expectedSize)
+            if (!isXbox1)
             {
-                using (var iso = new FileStream(output, FileMode.Open, FileAccess.Write, FileShare.None))
+                var expectedSize = partitionOffset + gamePartitionSize;
+                if (size < expectedSize)
                 {
-                    iso.SetLength(expectedSize);
+                    using (var iso = new FileStream(output, FileMode.Open, FileAccess.Write, FileShare.None))
+                    {
+                        iso.SetLength(expectedSize);
+                    }
+                    Record($"Extended the {discType} image with zero padding to {expectedSize:N0} bytes.");
                 }
-                Record($"Extended the {discType} image with zero padding to {expectedSize:N0} bytes.");
             }
 
             // Native verification (replaces the abgx360 read-only check).
+            var rootFile = isXbox1 ? "default.xbe" : "default.xex";
             var verified = XdvdfsProbe.FindGamePartitionOffset(output) == partitionOffset &&
-                           XdvdfsProbe.ContainsRootFile(output, "default.xex");
+                           XdvdfsProbe.ContainsRootFile(output, rootFile);
             if (verified)
-                Record("PASS: native verification found the XDVDFS header and default.xex in the root directory.");
+                Record($"PASS: native verification found the XDVDFS header and {rootFile} in the root directory.");
             else
-                Record("FAIL: native verification could not confirm the XDVDFS header and default.xex.");
+                Record($"FAIL: native verification could not confirm the XDVDFS header and {rootFile}.");
 
             File.WriteAllText(reportPath, report.ToString(), new UTF8Encoding(false));
             completed = true;
-            return new BuildResult(output, verified, XexInspector.ReadRegionCode(defaultXex), defaultXex,
-                stealth is not null, stealth?.IsV2 ?? false);
+            return new BuildResult(output, verified, isXbox1 ? null : XexInspector.ReadRegionCode(defaultXex!),
+                executable, stealth is not null, stealth?.IsV2 ?? false, isXbox1);
         }
         finally
         {
@@ -182,16 +206,19 @@ internal static class DiscTypeDetector
     {
         if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
             return new Result(null, "Select a game folder");
-        string? defaultXex;
+        string? defaultXbe, defaultXex;
         try
         {
-            defaultXex = Directory.EnumerateFiles(folder, "*", SearchOption.TopDirectoryOnly)
-                .FirstOrDefault(path => string.Equals(Path.GetFileName(path), "default.xex", StringComparison.OrdinalIgnoreCase));
+            var files = Directory.EnumerateFiles(folder, "*", SearchOption.TopDirectoryOnly).ToList();
+            defaultXbe = files.FirstOrDefault(path => string.Equals(Path.GetFileName(path), "default.xbe", StringComparison.OrdinalIgnoreCase));
+            defaultXex = files.FirstOrDefault(path => string.Equals(Path.GetFileName(path), "default.xex", StringComparison.OrdinalIgnoreCase));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return new Result(null, $"Cannot read folder: {ex.Message}");
         }
+        if (defaultXbe is not null)
+            return new Result("Xbox Executable (XBE)", "Xbox Executable (XBE) (original Xbox)");
         if (defaultXex is null)
             return new Result(null, "default.xex not found directly in this folder");
 
@@ -299,6 +326,7 @@ internal static class XdvdfsProbe
 {
     public const long Xgd2VideoOffset = 0xFD90000;
     public const long Xgd3VideoOffset = 0x2080000;
+    public const long OgxRedumpOffset = 0x18300000; // original Xbox redump full-disc (video partition first)
     public const long Xgd2GamePartitionSize = 7_307_001_856L;
     public const long Xgd3GamePartitionSize = 8_662_351_872L;
 
@@ -308,7 +336,7 @@ internal static class XdvdfsProbe
     public static long? FindGamePartitionOffset(string isoPath)
     {
         using var stream = new FileStream(isoPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.RandomAccess);
-        foreach (var offset in new[] { 0L, Xgd2VideoOffset, Xgd3VideoOffset })
+        foreach (var offset in new[] { 0L, 0xFD90L, 0x30600L, Xgd2VideoOffset, Xgd3VideoOffset, OgxRedumpOffset })
         {
             if (HasMagic(stream, offset + HeaderOffset)) return offset;
         }
@@ -317,9 +345,12 @@ internal static class XdvdfsProbe
 
     public static string Describe(long offset) => offset switch
     {
-        0 => "game partition only, no video partition",
+        0 => "game partition only (XISO / bare partition)",
+        0xFD90 => "cracked/rebuilt image layout",
+        0x30600 => "redump-style, video partition first",
         Xgd2VideoOffset => "full XGD2 layout",
         Xgd3VideoOffset => "full XGD3 layout",
+        OgxRedumpOffset => "XGD1 (original Xbox) full disc",
         _ => "unknown layout"
     };
 

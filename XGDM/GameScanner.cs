@@ -83,8 +83,14 @@ internal static class GameScanner
                 var xex = XdvdfsProbe.ReadRootFile(iso, "default.xex", 0x20000);
                 if (xex is null)
                 {
-                    log($"  {Path.GetFileName(iso)}: no default.xex in the game partition.");
-                    return "ISO";
+                    // Original Xbox discs use default.xbe instead of default.xex.
+                    var xbe = XdvdfsProbe.ReadRootFile(iso, "default.xbe", 0x20000);
+                    if (xbe is null)
+                    {
+                        log($"  {Path.GetFileName(iso)}: no default.xex/default.xbe in the game partition.");
+                        return "ISO";
+                    }
+                    return "XGD1";
                 }
                 return XexInspector.HasDiscProfileId(xex) switch
                 {
@@ -182,7 +188,8 @@ internal static class GameScanner
 
     private static bool ContainsDefaultXex(string folder) =>
         Directory.EnumerateFiles(folder, "*", SearchOption.TopDirectoryOnly)
-            .Any(path => string.Equals(Path.GetFileName(path), "default.xex", StringComparison.OrdinalIgnoreCase));
+            .Any(path => string.Equals(Path.GetFileName(path), "default.xex", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(Path.GetFileName(path), "default.xbe", StringComparison.OrdinalIgnoreCase));
 
     private static readonly Regex ExtractionSuffix = new(
         @"[\s._-]*[\(\[]?extracted[\)\]]?$",

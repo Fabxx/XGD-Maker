@@ -36,6 +36,7 @@ internal static class XdvdfsImageWriter
         long maxGamePartitionSize,
         bool reserveXgd2HashSectors,
         bool fillUnusedWithRandom,
+        bool padToMaxSize,
         long partitionOffset,
         IReadOnlyList<KeyValuePair<long, byte[]>> stealthSectors,
         Action<string> log,
@@ -94,7 +95,7 @@ internal static class XdvdfsImageWriter
 
         foreach (var dir in directories) SerializeTable(dir);
 
-        var finalSize = partitionOffset + (fillUnusedWithRandom ? maxGamePartitionSize : dataSize);
+        var finalSize = partitionOffset + (fillUnusedWithRandom && padToMaxSize ? maxGamePartitionSize : dataSize);
         var filler = new HoleFiller(fillUnusedWithRandom, reserveXgd2HashSectors, partitionOffset);
         foreach (var sector in stealthSectors)
         {
