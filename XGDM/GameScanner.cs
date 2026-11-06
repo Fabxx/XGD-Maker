@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace XGDMaker;
 
-internal sealed record ScanEntry(string Path, string DisplayName, bool IsIso, string Type, string Status);
+internal sealed record ScanEntry(string Path, string DisplayName, bool IsIso, string Type, string Status, string? GodXblaKind = null);
 
 internal static class GameScanner
 {
@@ -10,8 +10,9 @@ internal static class GameScanner
     {
         var folders = FindGameFolders(root, log, token);
         var isos = FindIsoFiles(root, log, token);
+        var packages = FindGodXblaPackages(root, log, token);
 
-        var entries = new List<ScanEntry>(folders.Count + isos.Count);
+        var entries = new List<ScanEntry>(folders.Count + isos.Count + packages.Count);
 
         var folderNames = UniqueNames(folders, f => CleanName(new DirectoryInfo(f).Name));
         for (var i = 0; i < folders.Count; i++)
@@ -31,9 +32,46 @@ internal static class GameScanner
             entries.Add(new ScanEntry(isos[i], isoNames[i], true, DetectIsoType(isos[i], log), "Ready"));
         }
 
+        var packagePaths = packages.Select(p => p.Path).ToList();
+        var packageNames = UniqueNames(packagePaths, p => CleanName(new DirectoryInfo(p).Name));
+        for (var i = 0; i < packages.Count; i++)
+        {
+            entries.Add(new ScanEntry(packages[i].Path, packageNames[i], false, packages[i].Kind, packages[i].Description, packages[i].Kind));
+        }
+
         entries.Sort((a, b) => string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase));
-        log($"Found {folders.Count} extracted game(s) and {isos.Count} ISO file(s) under {root}.");
+        log($"Found {folders.Count} extracted game(s), {isos.Count} ISO file(s) and {packages.Count} GOD/XBLA package(s) under {root}.");
         return entries;
+    }
+
+    private static List<GodXblaPackage> FindGodXblaPackages(string root, Action<string> log, CancellationToken token)
+    {
+        var result = new List<GodXblaPackage>();
+        var pending = new Stack<string>();
+        pending.Push(Path.GetFullPath(root));
+        while (pending.Count > 0)
+        {
+            token.ThrowIfCancellationRequested();
+            var folder = pending.Pop();
+            var pkg = GodXblaProbe.Detect(folder);
+            if (pkg is not null)
+            {
+                result.Add(pkg);
+                continue; // do not descend into a package
+            }
+            try
+            {
+                foreach (var child in new DirectoryInfo(folder).EnumerateDirectories()
+                             .Where(d => (d.Attributes & FileAttributes.ReparsePoint) == 0)
+                             .Select(d => d.FullName))
+                    pending.Push(child);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                log($"Skipped {folder}: {ex.Message}");
+            }
+        }
+        return result;
     }
 
     private static string DetectIsoType(string iso, Action<string> log)

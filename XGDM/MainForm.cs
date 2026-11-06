@@ -457,12 +457,22 @@ internal sealed class MainForm : Form
                     continue;
                 }
 
-                SetStatus(item, "Building…", SystemColors.ControlText);
+                SetStatus(item, entry.GodXblaKind is not null ? "Extracting…" : "Building…", SystemColors.ControlText);
                 _games.EnsureVisible(item.Index);
+                string? tempSource = null;
                 try
                 {
+                    var sourceFolder = entry.Path;
+                    if (entry.GodXblaKind is not null)
+                    {
+                        var pkg = new GodXblaPackage(entry.Path, entry.DisplayName, entry.GodXblaKind, entry.Status);
+                        tempSource = Path.Combine(Path.GetTempPath(), "XGDM", entry.DisplayName + "_" + Guid.NewGuid().ToString("N")[..8]);
+                        await Task.Run(() => GodXblaExtractor.Extract(pkg, tempSource, AppendLog, token), token);
+                        sourceFolder = tempSource;
+                    }
+
                     var result = await IsoBuilder.BuildAsync(
-                        new BuildRequest(entry.Path, output, randomFill, embedSs, overwrite), AppendLog, token);
+                        new BuildRequest(sourceFolder, output, randomFill, embedSs, overwrite), AppendLog, token);
                     var ssEmbedded = result.SsEmbedded;
                     var ssIsV2 = result.SsIsV2;
 
@@ -475,7 +485,7 @@ internal sealed class MainForm : Form
                     }
 
                     var sourceNote = "";
-                    if (deleteSource)
+                    if (deleteSource && entry.GodXblaKind is null)
                         sourceNote = await DeleteSourceIfIdenticalAsync(entry.Path, output, token);
 
                     if (!ssEmbedded)
@@ -495,6 +505,13 @@ internal sealed class MainForm : Form
                     SetStatus(item, "Error: " + ex.Message, Color.Firebrick);
                     AppendLog($"ERROR: {ex.Message}");
                     failed++;
+                }
+                finally
+                {
+                    if (tempSource is not null)
+                    {
+                        try { Directory.Delete(tempSource, recursive: true); } catch { /* best effort */ }
+                    }
                 }
                 _progress.Value = i + 1;
             }

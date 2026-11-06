@@ -5,13 +5,19 @@
   </em><br><br>
 </p>
 <p align="center">
-<img src="https://github.com/Fabxx/XGD-Maker/blob/main/XGDM_GUI_v3.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
+<img src="https://github.com/Fabxx/XGD-Maker/blob/main/GUI.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
 </p>
 
+# Usage Notes
+
+This tool is meant to be used if you have extracted a xbox 360 iso in the past, without preserving the redump sectors and alter the XGD structure. It will NOT restore deleted game files.
+
 # Features
-- Rebuild/Extract Xbox 360 games following XGD format (no XDK needed).
+- Rebuild/Extract Xbox 360 games following XGD format (no XDK needed)
 - On rebuilding, generates the SS, DMI, PFI and .DVD natively and embeds them into the ISO
+  - Note that if you dumped the game disc you can already extract the files, without the rebuilding process.
 - Reuses a locally stored SS when one is available (e.g. extracted from a redump disc) instead of the built-in template.
+- Detects and extracts Games on Demand (GOD) and XBLA (arcade) packages and rebuilds them as ISOs
 
 ## Requirements
 
@@ -22,7 +28,7 @@
 
 ## Building ISOs
 
-1. Select your **Games folder**, it will scan for both XISOs or raw `default.xex` files.
+1. Select your **Games folder**, it will scan for XISOs, raw `default.xex` files and GOD/XBLA packages.
 2. **Output folder** (optional): where the ISOs are written. Leave it empty to write each ISO next to its game folder.
 3. Tick the games you want and click **Build checked**.
 
@@ -34,6 +40,14 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 |---|---|---|
 | Overwrite existing ISOs | off | Replace an existing ISO. When off, games whose ISO already exists are skipped. |
 | Cleanup | off | Permanently delete the game folder after the build (see Safety). Asks for confirmation before the batch starts. |
+
+### Supported formats
+| Format | Description |
+|---|---|
+| `default.xex` | Extracted game files to be rebuilt |
+| `.iso` | Can be extracted to obtain game files and rebuild the XGD structure |
+| `XBLA` | Xbox Live Arcade game folders, which can be extracted and rebuilt as XGD iso |
+| `GOD` | Game On Demand format, same as XBLA behavior |
 
 ### Output files
 
@@ -88,6 +102,15 @@ The XDVDFS file system follows the retail layout:
 - files have attribute `0x80`;
 - on XGD2, sectors 48–4143 are left empty (on a real disc they hold authentication hashes).
 
+### GOD and XBLA
+
+Games on Demand (GOD) and Xbox Live Arcade (XBLA) packages are not raw XDVDFS disc images: they use the Xbox "LIVE" container format (STFS/SVOD). XGDM detects them during the Games folder scan and, when built, extracts the game files first and then rebuilds them as a normal XGD ISO (disc type detection, SS/DMI/PFI generation and embedding).
+
+- **GOD** (SVOD layout): an `LIVE` header file plus a `<media id>.data` folder of `Data0000..DataXXXX` fragments. The fragments hold the XDVDFS image with hash tables interleaved between the data blocks; XGDM reads `start_data_block` from the header and maps each logical block to its physical fragment/offset using the SVOD block/hash layout.
+- **XBLA** (STFS layout): a single `LIVE` container with a directory block tree and hash chaining; XGDM walks the directory tree and follows each file's block hash chain to reconstruct its content.
+
+The extracted files are then treated like any extracted game folder and rebuilt into a full retail-layout ISO.
+
 ## Safety
 
 - Game folders are never modified.
@@ -107,7 +130,6 @@ The XDVDFS file system follows the retail layout:
 | Problem | Solution |
 |---|---|
 | Xenon: "disc unreadable" | check that `<game>.iso.ss` is next to the ISO and that the status shows an embedded SS |
-| "You must install .NET" when starting the program | use the single-file release build (see Building from source); a framework-dependent build only runs when its `.runtimeconfig.json` / `.deps.json` files are next to the exe and the **.NET 8 Desktop Runtime x64** (not just the .NET Runtime) is installed |
 | Xenon: "Error opening DVD key file" | create `dvdkey.txt` with your console's DVD key |
 
 ## Building from source
@@ -128,7 +150,9 @@ The exe is written to `XGDMaker\bin\publish\`. In Visual Studio: right-click the
 
 - [EXTRACT-XISO](https://github.com/xboxdev/extract-xiso)
 
-- [ABGX360](https://abgx360.hadzz.com/) (open source reference for the SS/DMI/PFI format; no longer a runtime dependency)
+- [ABGX360](https://abgx360.hadzz.com/) (reference for the SS/DMI/PFI format)
+
+- [Xenia](https://github.com/xenia-project/xenia) (reference for the STFS/SVOD GOD and XBLA container format)
 
 ## Disclaimer
 
