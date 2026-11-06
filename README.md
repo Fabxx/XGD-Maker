@@ -6,7 +6,12 @@
 </p>
 <p align="center">
 <img src="https://github.com/Fabxx/XGD-Maker/blob/main/GUI.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
+<img src="https://github.com/Fabxx/XGD-Maker/blob/main/GUI.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
 </p>
+
+# Usage Notes
+
+This tool is meant to be used if you have extracted a xbox 360 iso in the past, without preserving the redump sectors and alter the XGD structure. It will NOT restore deleted game files.
 
 # Usage Notes
 
@@ -44,7 +49,7 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 ### Supported formats
 | Format | Description |
 |---|---|
-| `default.xex` | Extracted game files to be rebuilt |
+| `.xex` | Extracted game files to be rebuilt |
 | `.iso` | Can be extracted to obtain game files and rebuild the XGD structure |
 | `XBLA` | Xbox Live Arcade game folders, which can be extracted and rebuilt as XGD iso |
 | `GOD` | Game On Demand format, same as XBLA behavior |
@@ -64,6 +69,7 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 
 | Status | Meaning |
 |---|---|
+| XISO OK | SS - DMI - PFI - .DVD restored | All checks OK |
 | XISO OK | SS - DMI - PFI - .DVD restored | All checks OK |
 | ERROR – could not read the Media ID | the `default.xex` has no readable media id |
 | ERROR - verification after rebuild FAILED | the image header or `default.xex` could not be confirmed; see the log |
