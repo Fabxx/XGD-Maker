@@ -66,6 +66,7 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 
 | Status | Meaning |
 |---|---|
+| OG XBOX OK | .ISO rebuilt |
 | XISO OK | SS - DMI - PFI - .DVD restored | All checks OK |
 | ERROR – could not read the Media ID | the `default.xex` has no readable media id |
 | ERROR - verification after rebuild FAILED | the image header or `default.xex` could not be confirmed; see the log |
