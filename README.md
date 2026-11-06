@@ -5,7 +5,7 @@
   </em><br><br>
 </p>
 <p align="center">
-<img src="https://github.com/Fabxx/XGD-Maker/blob/main/XGDM_GUI.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
+<img src="https://github.com/Fabxx/XGD-Maker/blob/main/XGDM_GUI_v3.png?raw=true" alt="XGDM GUI" width="800" height="600"/><br>
 </p>
 
 # Features
@@ -50,7 +50,7 @@ Games are built one at a time. **Cancel** stops the current game (its partial IS
 
 | Status | Meaning |
 |---|---|
-| XISO OK – SS | DMI | PFI | .DVD restored | All checks OK |
+| XISO OK | SS - DMI - PFI - .DVD restored | All checks OK |
 | ERROR – could not read the Media ID | the `default.xex` has no readable media id |
 | ERROR - verification after rebuild FAILED | the image header or `default.xex` could not be confirmed; see the log |
 | Skipped: ISO already exists | tick **Overwrite existing ISOs** to rebuild it |
